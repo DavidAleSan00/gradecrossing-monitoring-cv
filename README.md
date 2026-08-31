@@ -211,8 +211,8 @@ in `debug_timeline.csv`.
 Videos are registered with one local path in `data/manifests/videos.yaml`:
 
 ```yaml
-- id: crossing_002
-  path: data/videos/crossing_002.mp4
+- id: clip01
+  path: data/videos/clip01.mp4
   status: ready
   zoi: [[100, 400], [500, 350], [1650, 480], [1500, 600]]
 ```
@@ -227,8 +227,8 @@ status becomes `ready`.
 Video IDs may contain spaces. Both of these forms work:
 
 ```bash
-python -m pipeline run --video "35th and Cornhusker Hwy - Trim 5"
-python -m pipeline run --video 35th and Cornhusker Hwy - Trim 5
+python -m pipeline run --video clip01
+python -m pipeline run --video "clip01"
 ```
 
 ### Model Weights
