@@ -1,0 +1,48 @@
+# OS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+
+# Testing
+.pytest_cache/
+tests/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Claude Code
+.claude/
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# Third-party tool directories
+.codegraphy/
+
+# Trained weights
+weights/*
+!weights/.gitkeep
+!weights/yolo26n.pt
+
+# Video files
+*.mov
+*.mp4
+*.avi
+
+# Pipeline outputs
+outputs/
+
+# Training outputs
+runs/
+
+# Local experiment logs
+*.log

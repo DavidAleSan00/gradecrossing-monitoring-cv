@@ -1,0 +1,54 @@
+# Video manifest — register every video here before running the pipeline.
+
+videos:
+  - id: clip01
+    path: data/videos/youtube/clip01.mp4
+    zoi: [[1308, 425], [310, 871], [13, 871], [6, 419], [496, 349], [562, 359], [768, 319], [978, 353], [862, 384], [1113, 410], [1261, 362], [1403, 384]]
+
+  - id: clip02
+    path: data/videos/youtube/clip02.mp4
+    zoi: [[2, 339], [277, 313], [357, 298], [400, 294], [419, 299], [540, 287], [531, 280], [389, 289], [2, 320]]
+
+  - id: clip03
+    path: data/videos/youtube/clip03.mp4
+    zoi: [[116, 308], [636, 322], [639, 306], [281, 303], [173, 301]]
+
+  - id: clip04
+    path: data/videos/youtube/clip04.mp4
+    zoi: [[596, 263], [432, 254], [85, 233], [84, 242], [303, 257], [596, 277]]
+
+  - id: clip05
+    path: data/videos/youtube/clip05.mp4
+    zoi: [[198, 270], [597, 273], [597, 284], [270, 277], [135, 276]]
+
+  - id: clip06
+    path: data/videos/youtube/clip06.mp4
+    zoi: [[229, 220], [503, 222], [505, 231], [183, 228]]
+
+  - id: clip07
+    path: data/videos/youtube/clip07.mp4
+    zoi: [[203, 130], [231, 124], [516, 355], [390, 359]]
+
+  - id: 35th and Cornhusker Hwy - Trim 5
+    path: data/videos/railway-dataset/35th and Cornhusker Hwy/2024-02-10_03-20-23 - Trim 5.mp4
+    zoi: [[21, 562], [1896, 716], [1901, 882], [24, 702]]
+
+  - id: 35th and Cornhusker Hwy - Trim 1
+    path: data/videos/railway-dataset/35th and Cornhusker Hwy/2024-02-10_03-20-23 - Trim 1.mp4
+    zoi: [[28, 554], [1897, 705], [1904, 897], [20, 704]]
+
+  - id: 35th and Cornhusker Hwy - Trim 10
+    path: data/videos/railway-dataset/35th and Cornhusker Hwy/2024-02-10_03-20-23 - Trim 10.mp4
+    zoi: [[28, 554], [1897, 705], [1904, 897], [20, 704]]
+
+  - id: 56 & Old Cheney - Trim 1
+    path: data/videos/railway-dataset/56 & Old Cheney/2024-02-12_16-24-58 - Trim 1.mp4
+    zoi: [[956, 213], [1046, 206], [1861, 692], [1863, 974]]
+
+  - id: NW 12th & Cornhusker - Trim 3
+    path: data/videos/railway-dataset/NW 12th & Cornhusker/2024-02-16_12-18-46 - Trim 3.mp4
+    zoi: [[769, 1068], [1349, 1067], [1898, 761], [1895, 554], [1303, 831]]
+
+  - id: 27th and NE Pkwy - Trim 1
+    path: data/videos/railway-dataset/27th and NE Pkwy/2024-02-10_03-20-40 - Trim 1.mp4
+    zoi: [[617, 547], [910, 563], [1288, 567], [1313, 598], [835, 588], [609, 575]]

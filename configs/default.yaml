@@ -1,0 +1,48 @@
+# Project configuration overlay.
+#
+# Runtime defaults have one authoritative source: the typed dataclasses in
+# pipeline/config.py. Uncomment only values intentionally changed for this
+# deployment. Every run still writes the fully resolved tree to config_used.yaml.
+
+# frame_step: 2
+
+# model:
+#   path: weights/yolo26n.pt
+#   conf: 0.25
+#   train_conf: 0.05
+#   vehicle_classes: [2, 3, 5, 7]
+#   train_class: 6
+
+# optical_flow:
+#   max_corners: 200
+#   quality_level: 0.01
+#   min_distance: 30
+#   block_size: 7
+#   win_size: 21
+#   max_level: 3
+
+# background:
+#   history: 300
+#   var_threshold: 50
+#   detect_shadows: true
+#   global_change_zoi_ratio: 0.80
+#   global_change_reset_frames: 30
+
+# zoi:
+#   vehicle_overlap_ratio: 0.30
+#   train_occupancy_ratio: 0.30
+#   train_exclusion_grace_s: 15.0
+
+# occupancy:
+#   clear_confirmation_s: 2.0
+#   continuity_min_iou: 0.10
+#   foreground_support_min_ratio: 0.10
+#   foreground_support_expand_ratio: 0.25
+#   foreground_support_min_area: 100
+
+# thresholds:
+#   debris_min_zoi_ratio: 0.02
+#   debris_match_iou: 0.10
+#   vehicle_alert_s: 3.0
+#   debris_alert_s: 2.0
+#   debris_clear_confirmation_s: 0.5
