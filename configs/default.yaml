@@ -10,6 +10,7 @@
 #   path: weights/yolo26n.pt
 #   conf: 0.25
 #   train_conf: 0.05
+#   imgsz: 640
 #   vehicle_classes: [2, 3, 5, 7]
 #   train_class: 6
 

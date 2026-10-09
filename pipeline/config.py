@@ -18,6 +18,7 @@ class ModelConfig:
     path: str = "weights/yolo26n.pt"
     conf: float = 0.25
     train_conf: float = 0.05
+    imgsz: int = 640
     vehicle_classes: list = field(default_factory=lambda: [2, 3, 5, 7])
     train_class: int = 6
 

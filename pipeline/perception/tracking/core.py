@@ -22,6 +22,7 @@ def run_tracking(model, frame: np.ndarray, cfg: ModelConfig):
         verbose=False,
         conf=min(cfg.conf, cfg.train_conf),
         classes=cfg.classes,
+        imgsz=cfg.imgsz,
     )[0]
 
 
