@@ -8,15 +8,14 @@ import cv2
 import numpy as np
 
 from .perception.contracts import DetectionRecord
-from .temporal.occupancy import OccupancyEvent
-from .temporal.state import (
-    AlertCause,
-    CrossingStatus,
-    DebrisComponentObservation,
-)
+from .perception.stabilization import transform_bbox
+from .temporal.debris import _DebrisHypothesis
+from .temporal.occupancy import OccupancyEvent, OccupancyState
+from .temporal.state import CrossingStatus
 
 Color = tuple[int, int, int]
 Row = tuple[str, str, Color]
+StripLine = tuple[str, Color]
 
 _C_CLEAR = (80, 200, 80)
 _C_MONITORING = (0, 165, 255)
@@ -92,7 +91,6 @@ class _StatusCardLayout:
     text_left: int
     text_right: int
     header_baseline: int
-    subtitle_baseline: int | None
     detail_baselines: tuple[int, ...]
     header_style: _TextStyle
     detail_style: _TextStyle
@@ -107,62 +105,8 @@ def _style(scale: float, thickness: int) -> _TextStyle:
     return _TextStyle(scale, thickness, height, baseline)
 
 
-def _status_content(
-    status: CrossingStatus,
-    alert_cause: AlertCause | None,
-    occupancy_event: OccupancyEvent | None,
-    vehicle_occupancy_s: float,
-    debris_present: bool,
-    debris_confirmed: bool,
-    debris_dwell_s: float,
-    alert_s: float,
-    train_context: str = "NONE",
-) -> tuple[str, str | None, list[Row]]:
-    """Build the card directly from the authoritative crossing status."""
-    vehicle_present = occupancy_event is not None
-    rows: list[Row] = []
-    if status == "CLEAR":
-        headline, subtitle = "CLEAR", "No confirmed object in hazard zone"
-    else:
-        headline = (
-            "OCCUPIED - ALERT"
-            if status == "OCCUPIED_ALERT"
-            else "OCCUPIED - MONITORING"
-        )
-        subtitle = None
-        ids = occupancy_event.current_track_ids if occupancy_event else set()
-        track_id = next(iter(ids)) if len(ids) == 1 else None
-        vehicle = f"Vehicle #{track_id}" if track_id is not None else "Vehicle"
-        object_name = (
-            f"{vehicle} + debris" if vehicle_present and debris_present
-            else vehicle if vehicle_present else "Debris"
-        )
-        rows.append(("Object", object_name, _C_PRIMARY))
-        if vehicle_present:
-            rows.append(("Occupied for", f"{vehicle_occupancy_s:.1f} s", _C_PRIMARY))
-        if debris_present:
-            rows.append((
-                "Debris evidence" if vehicle_present else "Persistence",
-                f"{debris_dwell_s:.1f} s", _C_PRIMARY,
-            ))
-        if status == "OCCUPIED_ALERT":
-            rows.append(("Alert active for", f"{alert_s:.1f} s", _C_PRIMARY))
-            condition = (
-                "Vehicle + persistent debris"
-                if alert_cause == "vehicle" and debris_confirmed
-                else "Vehicle occupancy" if alert_cause == "vehicle"
-                else "Persistent debris" if alert_cause == "debris"
-                else "Unavailable"
-            )
-            rows.append(("Alert condition", condition, _C_PRIMARY))
-    if train_context in {"TRAIN_PASSING", "TRAIN_GRACE"}:
-        rows.append(("Train", train_context.replace("_", " "), _C_TRAIN))
-    return headline, subtitle, rows
-
-
 def _measure(
     headline: str,
-    subtitle: str | None,
     rows: list[Row],
     header_scale: float,
     detail_scale: float,
@@ -176,7 +120,6 @@ def _measure(
     widths = [
         radius * 2 + max(3, round(header.height * 0.45))
         + _text_w(headline, header.scale, header.thickness),
-        *([_text_w(subtitle, detail.scale, detail.thickness)] if subtitle else []),
         *(
             _text_w(label, detail.scale, detail.thickness) + column_gap
             + _text_w(value, detail.scale, detail.thickness)
@@ -189,7 +132,6 @@ def _measure(
 def _build_status_card_layout(
     frame_shape: tuple[int, ...],
     headline: str,
-    subtitle: str | None,
     rows: list[Row],
 ) -> _StatusCardLayout:
     height, width = frame_shape[:2]
@@ -209,7 +151,7 @@ def _build_status_card_layout(
 
     for _ in range(4):
         measured = _measure(
-            headline, subtitle, rows, header_scale, detail_scale,
+            headline, rows, header_scale, detail_scale,
             header_thickness, detail_thickness, column_gap,
         )
         if measured[3] <= available:
@@ -223,7 +165,7 @@ def _build_status_card_layout(
         header_scale, detail_scale = resized
 
     header, detail, radius, measured_width = _measure(
-        headline, subtitle, rows, header_scale, detail_scale,
+        headline, rows, header_scale, detail_scale,
         header_thickness, detail_thickness, column_gap,
     )
     content_width = max(
@@ -239,11 +181,6 @@ def _build_status_card_layout(
         detail.height + detail.baseline,
         radius * 2,
     )
-    subtitle_baseline = None
-    if subtitle:
-        cursor += max(2, round(detail.height * 0.55))
-        subtitle_baseline = cursor + detail.height
-        cursor += detail.height + detail.baseline
     line_gap = max(2, round(detail.height * 0.45))
     pitch = line_gap + detail.height + detail.baseline
     first_detail = cursor + line_gap + detail.height
@@ -252,26 +189,19 @@ def _build_status_card_layout(
     y2 = min(height - margin, cursor + pad_y)
     return _StatusCardLayout(
         (x1, y1, x2, y2), accent_width, text_left, text_right,
-        header_baseline, subtitle_baseline, detail_baselines, header, detail,
+        header_baseline, detail_baselines, header, detail,
         (text_left + radius, header_baseline - max(1, header.height // 3)), radius,
     )
 
 
-def _draw_status_card(
+def _render_card(
     frame: np.ndarray,
-    status: CrossingStatus,
-    alert_cause: AlertCause | None,
-    occupancy_event: OccupancyEvent | None,
-    **details,
+    headline: str,
+    rows: list[Row],
+    accent: Color,
 ) -> None:
-    headline, subtitle, rows = _status_content(
-        status, alert_cause, occupancy_event, **details,
-    )
-    layout = _build_status_card_layout(frame.shape, headline, subtitle, rows)
-    accent = _C_TRAIN if (
-        status == "CLEAR"
-        and details["train_context"] in {"TRAIN_PASSING", "TRAIN_GRACE"}
-    ) else _accent(status)
+    """Paint a responsive corner card. Content is decided by the caller."""
+    layout = _build_status_card_layout(frame.shape, headline, rows)
     x1, y1, x2, y2 = layout.bounds
     _translucent_rect(frame, layout.bounds, 0.78, _C_PANEL)
     _translucent_rect(frame, (x1, y1, x1 + layout.accent_width, y2), 0.95, accent)
@@ -284,11 +214,6 @@ def _draw_status_card(
         frame, headline, (status_x, layout.header_baseline),
         header.scale, header.thickness, _C_PRIMARY,
     )
-    if subtitle and layout.subtitle_baseline is not None:
-        _put(
-            frame, subtitle, (layout.text_left, layout.subtitle_baseline),
-            detail.scale, detail.thickness, _C_SUB,
-        )
     for (label, value, value_color), baseline in zip(rows, layout.detail_baselines):
         _put(
             frame, label, (layout.text_left, baseline),
@@ -299,6 +224,15 @@ def _draw_status_card(
             (layout.text_right - _text_w(value, detail.scale, detail.thickness), baseline),
             detail.scale, detail.thickness, value_color,
         )
+
+
+def _draw_context_card(frame: np.ndarray, train_context: str, fallback_rows: list[Row]) -> None:
+    """Compact corner display for train passage/grace context, plus a row for
+    any vehicle event whose own box was withheld because it would otherwise
+    be drawn over the train (see _draw_vehicle_annotations)."""
+    if train_context not in {"TRAIN_PASSING", "TRAIN_GRACE"}:
+        return
+    _render_card(frame, train_context.replace("_", " "), fallback_rows, _C_TRAIN)
 
 
 def _draw_zoi(
@@ -318,18 +252,16 @@ def _draw_zoi(
     cv2.polylines(frame, [points], True, outline, max(1, round(2 * scale)))
 
 
-def _draw_detection(frame: np.ndarray, detection: DetectionRecord, scale: float) -> None:
+def _draw_train_detection(frame: np.ndarray, detection: DetectionRecord, scale: float) -> None:
+    """Preserve the pre-redesign train box/label exactly; trains keep their own style."""
     x1, y1, x2, y2 = detection.bbox
     height, width = frame.shape[:2]
-    is_train = detection.class_name.lower() == "train"
-    color = _C_TRAIN if is_train else (
-        _C_MONITORING if detection.in_zoi else _C_UNKNOWN
-    )
+    color = _C_TRAIN
     cv2.rectangle(frame, (x1, y1), (x2, y2), color, max(1, round(2 * scale)))
-    name = detection.class_name.upper()
-    label = f"{name} | ID {detection.track_id}" if detection.track_id is not None else name
-    if is_train:
-        label += f" | {detection.confidence:.2f}"
+    label = "TRAIN"
+    if detection.track_id is not None:
+        label += f" | ID {detection.track_id}"
+    label += f" | {detection.confidence:.2f}"
     font_scale, thickness = max(0.28, 0.48 * scale), max(1, round(scale))
     (text_width, text_height), baseline = cv2.getTextSize(
         label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness,
@@ -346,35 +278,390 @@ def _draw_detection(frame: np.ndarray, detection: DetectionRecord, scale: float)
     )
 
 
+# --- Shared vehicle/debris annotation: title above the box, compact strip below. ---
+
+def _vertical_placement(
+    y1: int, y2: int, frame_height: int, title_h: int, strip_h: int,
+) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Place the title above the box and the strip below it, flipping each
+    inward at a frame edge. Title and strip are then treated as one
+    contiguous group — stacked without a gap if the flips would otherwise
+    overlap them — and that whole group is clamped to the frame by a single
+    shift, so the stack decision and the frame-bound clamp can't undo each
+    other (as two independent per-block clamps could)."""
+    title_top = y1 - title_h if y1 - title_h >= 0 else y1
+    title_bottom = title_top + title_h
+
+    if strip_h:
+        strip_top = y2 if frame_height - y2 >= strip_h else y2 - strip_h
+        if strip_top < title_bottom:
+            strip_top = title_bottom
+        strip_bottom = strip_top + strip_h
+    else:
+        strip_top = strip_bottom = title_bottom
+
+    group_top, group_bottom = title_top, strip_bottom
+    if group_top < 0:
+        shift = -group_top
+        title_top, title_bottom = title_top + shift, title_bottom + shift
+        strip_top, strip_bottom = strip_top + shift, strip_bottom + shift
+        group_bottom += shift
+    if group_bottom > frame_height:
+        shift = group_bottom - frame_height
+        title_top, title_bottom = title_top - shift, title_bottom - shift
+        strip_top, strip_bottom = strip_top - shift, strip_bottom - shift
+
+    return (title_top, title_bottom), (strip_top, strip_bottom)
+
+
+def _horizontal_left(x1: int, block_width: int, frame_width: int) -> int:
+    """Shift the block fully inside the frame instead of just clamping its
+    background panel; this is what keeps the *text* from clipping at an edge."""
+    left = x1
+    if left + block_width > frame_width:
+        left = frame_width - block_width
+    return max(0, left)
+
+
+def _dashed_rectangle(
+    frame: np.ndarray,
+    pt1: tuple[int, int],
+    pt2: tuple[int, int],
+    color: Color,
+    thickness: int,
+    dash_len: int = 6,
+    gap_len: int = 5,
+) -> None:
+    """A dashed box outline — the visual marker for inferred/non-semantic
+    regions (a vehicle's last-known location, an unclassified change area),
+    as opposed to the solid outline used for a current tracked detection."""
+    x1, y1 = pt1
+    x2, y2 = pt2
+
+    def _dashed_line(start: tuple[float, float], end: tuple[float, float]) -> None:
+        start_arr, end_arr = np.array(start, dtype=float), np.array(end, dtype=float)
+        length = float(np.linalg.norm(end_arr - start_arr))
+        if length < 1e-6:
+            return
+        direction = (end_arr - start_arr) / length
+        step = dash_len + gap_len
+        distance = 0.0
+        while distance < length:
+            seg_start = start_arr + direction * distance
+            seg_end = start_arr + direction * min(distance + dash_len, length)
+            cv2.line(
+                frame, tuple(seg_start.astype(int)), tuple(seg_end.astype(int)),
+                color, thickness, cv2.LINE_AA,
+            )
+            distance += step
+
+    _dashed_line((x1, y1), (x2, y1))
+    _dashed_line((x2, y1), (x2, y2))
+    _dashed_line((x2, y2), (x1, y2))
+    _dashed_line((x1, y2), (x1, y1))
+
+
+def _draw_label_block(
+    frame: np.ndarray,
+    left: int,
+    top: int,
+    width: int,
+    height: int,
+    lines: list[str],
+    colors: list[Color],
+    scale: float,
+    thickness: int,
+    pad_x: int,
+    pad_y: int,
+    line_gap: int,
+    line_height: int,
+) -> None:
+    _translucent_rect(frame, (left, top, left + width, top + height), 0.80, _C_PANEL)
+    y = top + pad_y + line_height
+    for line, color in zip(lines, colors):
+        _put(frame, line, (left + pad_x, y), scale, thickness, color)
+        y += line_height + line_gap
+
+
+def _draw_object_annotation(
+    frame: np.ndarray,
+    bbox: tuple[int, int, int, int],
+    title: str,
+    strip_lines: list[StripLine],
+    accent: Color,
+    scale: float,
+    box_thickness: int | None = None,
+    dashed: bool = False,
+) -> None:
+    """Shared vehicle/debris drawing: box, title above, compact strip below.
+    ``dashed`` marks an inferred/non-semantic region (a last-known vehicle
+    location, an unclassified change area) rather than a current detection."""
+    height, width = frame.shape[:2]
+    x1, y1, x2, y2 = bbox
+    # A box with no overlap with the visible frame has nothing to anchor a
+    # label to; skip it rather than float a label at the nearest edge.
+    vis_x1, vis_y1 = max(0, x1), max(0, y1)
+    vis_x2, vis_y2 = min(width, x2), min(height, y2)
+    if vis_x1 >= vis_x2 or vis_y1 >= vis_y2:
+        return
+    x1, y1, x2, y2 = vis_x1, vis_y1, vis_x2, vis_y2
+
+    thickness = box_thickness if box_thickness is not None else max(1, round(2 * scale))
+    if dashed:
+        _dashed_rectangle(frame, (x1, y1), (x2, y2), accent, thickness)
+    else:
+        cv2.rectangle(frame, (x1, y1), (x2, y2), accent, thickness)
+
+    title_scale, title_thickness = max(0.28, 0.48 * scale), max(1, round(scale))
+    strip_scale, strip_thickness = max(0.24, 0.40 * scale), max(1, round(scale))
+    pad_x, pad_y = max(3, round(4 * scale)), max(2, round(3 * scale))
+    line_gap = max(1, round(2 * scale))
+
+    (title_w, title_line_h), title_base = cv2.getTextSize(
+        title, cv2.FONT_HERSHEY_SIMPLEX, title_scale, title_thickness,
+    )
+    title_block_h = title_line_h + title_base + 2 * pad_y
+    title_block_w = title_w + 2 * pad_x
+
+    strip_texts = [text for text, _ in strip_lines]
+    strip_sizes = [
+        cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, strip_scale, strip_thickness)
+        for text in strip_texts
+    ]
+    strip_count = len(strip_lines)
+    strip_line_h = max((size[0][1] for size in strip_sizes), default=0)
+    strip_base = max((size[1] for size in strip_sizes), default=0)
+    strip_block_h = (
+        strip_count * strip_line_h + max(0, strip_count - 1) * line_gap
+        + strip_base + 2 * pad_y
+    ) if strip_count else 0
+    strip_block_w = (
+        max(size[0][0] for size in strip_sizes) + 2 * pad_x
+    ) if strip_count else 0
+
+    (title_top, _title_bottom), (strip_top, _strip_bottom) = _vertical_placement(
+        y1, y2, height, title_block_h, strip_block_h,
+    )
+
+    title_left = _horizontal_left(x1, title_block_w, width)
+    _draw_label_block(
+        frame, title_left, title_top, title_block_w, title_block_h,
+        [title], [_C_PRIMARY], title_scale, title_thickness,
+        pad_x, pad_y, 0, title_line_h,
+    )
+
+    if strip_count:
+        strip_left = _horizontal_left(x1, strip_block_w, width)
+        colors = [color for _, color in strip_lines]
+        _draw_label_block(
+            frame, strip_left, strip_top, strip_block_w, strip_block_h,
+            strip_texts, colors, strip_scale, strip_thickness,
+            pad_x, pad_y, line_gap, strip_line_h,
+        )
+
+
+def _vehicle_accent(event: OccupancyEvent, vehicle_alert_s: float) -> Color:
+    return _C_ALERT if event.dwell_s >= vehicle_alert_s else _C_MONITORING
+
+
+def _vehicle_status_line(event: OccupancyEvent, vehicle_alert_s: float, accent: Color) -> StripLine:
+    status_word = "ALERT" if event.dwell_s >= vehicle_alert_s else "MONITORING"
+    return f"{status_word} {event.dwell_s:.1f}s", accent
+
+
+def _clearance_note(
+    event: OccupancyEvent, registration_valid: bool, clear_confirmation_s: float,
+) -> str:
+    """Describe the clearance timer honestly: it only counts down while
+    absence is actually being observed, and pauses for two distinct reasons."""
+    if event.evidence_source == "FOREGROUND":
+        return "RETAINED (FG)"
+    if not registration_valid:
+        return "RETAINED (NO REG)"
+    remaining = max(0.0, clear_confirmation_s - event.observable_absence_s)
+    return f"CLEARING {remaining:.1f}s"
+
+
+def _vehicle_title(class_name: str | None, track_id: int | None, *, last_known: bool) -> str:
+    """The box title never claims more identity than is actually known: the
+    real class name only when a live detection supplied one, the generic
+    "VEHICLE" otherwise; the ID only when exactly one is known; and the
+    "(LAST KNOWN)" marker only for a box drawn from retained evidence, never
+    implying a historical box identifies whatever is currently under it."""
+    base = class_name.upper() if class_name else "VEHICLE"
+    suffix = f" #{track_id}" if track_id is not None else ""
+    marker = " (LAST KNOWN)" if last_known else ""
+    return f"{base}{suffix}{marker}"
+
+
+def _draw_vehicle_annotations(
+    frame: np.ndarray,
+    detections: list[DetectionRecord],
+    occupancy_events: tuple[OccupancyEvent, ...],
+    reference_to_current: np.ndarray,
+    registration_valid: bool,
+    vehicle_alert_s: float,
+    clear_confirmation_s: float,
+    train_context: str,
+    scale: float,
+) -> list[Row]:
+    """Draw each occupancy event, keyed by its own ``occupancy_state`` rather
+    than by whether a same-ID detection happens to exist this frame — that
+    distinction is what separates a confirmed live match from a track ID the
+    estimator kept only because registration failed (see _clearance_note).
+
+    OCCUPIED: drawn solid, using the live camera-frame detection for its
+    class name and precise box when one is found by ID (not new matching —
+    ``current_track_ids`` is the estimator's own association result; this is
+    a lookup into it). Falls back to the event's own last_box/generic title
+    for an untracked (track_id is None) vehicle, which otherwise has no way
+    to be found by ID at all.
+
+    UNCERTAIN: never a live box. Drawn dashed with explicit "(LAST KNOWN)"
+    wording, from event.last_box transformed into camera coordinates — except
+    during train passage/grace, where that location is also where the train
+    is, so instead of drawing a box over the train we return a corner-card
+    row for the caller to render, keeping the alarm visible without implying
+    the box identifies what the train detector currently sees there.
+    """
+    detections_by_track: dict[int, DetectionRecord] = {
+        detection.track_id: detection
+        for detection in detections
+        if detection.track_id is not None
+        and detection.in_zoi
+        and detection.class_name.lower() != "train"
+    }
+    fallback_rows: list[Row] = []
+    represented_track_ids: set[int] = set()
+
+    for event in occupancy_events:
+        track_id = (
+            next(iter(event.current_track_ids))
+            if len(event.current_track_ids) == 1 else None
+        )
+        if track_id is not None:
+            represented_track_ids.add(track_id)
+        accent = _vehicle_accent(event, vehicle_alert_s)
+        status_text, _ = _vehicle_status_line(event, vehicle_alert_s, accent)
+
+        if event.occupancy_state is OccupancyState.OCCUPIED:
+            live_detection = detections_by_track.get(track_id) if track_id is not None else None
+            if live_detection is not None:
+                bbox = live_detection.bbox
+                title = _vehicle_title(live_detection.class_name, track_id, last_known=False)
+            elif event.last_box is not None:
+                bbox = transform_bbox(event.last_box, reference_to_current)
+                title = _vehicle_title(None, track_id, last_known=False)
+            else:
+                continue
+            _draw_object_annotation(
+                frame, bbox, title, [(status_text, accent)], accent, scale,
+            )
+            continue
+
+        # UNCERTAIN: retained/last-known evidence, never presented as a live match.
+        if event.last_box is None:
+            continue
+        clearance = _clearance_note(event, registration_valid, clear_confirmation_s)
+        if train_context in {"TRAIN_PASSING", "TRAIN_GRACE"}:
+            label = f"Retained vehicle #{track_id}" if track_id is not None else "Retained vehicle"
+            fallback_rows.append((label, f"{status_text} | {clearance}", accent))
+            continue
+        bbox = transform_bbox(event.last_box, reference_to_current)
+        title = _vehicle_title(None, track_id, last_known=True)
+        _draw_object_annotation(
+            frame, bbox, title, [(status_text, accent), (clearance, _C_SUB)], accent, scale,
+            box_thickness=max(1, round(scale)), dashed=True,
+        )
+
+    # A tracked, in-zoi vehicle detection with no occupancy event at all this
+    # frame (e.g. train visibility suppressed new vehicle evidence) is still
+    # a real detection — show it plainly, with no dwell/status claim, rather
+    # than silently dropping it. An untracked detection is never orphaned
+    # this way: it is always 1:1 covered by its own (untracked) event above.
+    for detection in detections:
+        if (
+            detection.track_id is None
+            or detection.track_id in represented_track_ids
+            or not detection.in_zoi
+            or detection.class_name.lower() == "train"
+        ):
+            continue
+        title = _vehicle_title(detection.class_name, detection.track_id, last_known=False)
+        _draw_object_annotation(frame, detection.bbox, title, [], _C_UNKNOWN, scale)
+
+    return fallback_rows
+
+
+def _debris_accent(hypothesis: _DebrisHypothesis) -> Color:
+    """Current ``support`` drives the label, not the one-way ``confirmed``
+    latch: a hypothesis can stay ``confirmed`` while evidence rebuilds after
+    a gap, and that must read as MONITORING again, not a stale ALERT."""
+    return _C_ALERT if hypothesis.support >= 1.0 else _C_CANDIDATE
+
+
+def _debris_status_line(hypothesis: _DebrisHypothesis, accent: Color) -> StripLine:
+    status_word = "ALERT" if hypothesis.support >= 1.0 else "MONITORING"
+    return f"{status_word}  EVIDENCE {hypothesis.support * 100:.0f}%", accent
+
+
+def _debris_title(hypothesis_id: int) -> str:
+    """UNKNOWN CHANGE — not a word implying classification; this is an
+    unexplained foreground-change region, not a detected object."""
+    return f"UNKNOWN CHANGE #{hypothesis_id}"
+
+
+def _draw_debris_annotations(
+    frame: np.ndarray,
+    debris_hypotheses: tuple[_DebrisHypothesis, ...],
+    reference_to_current: np.ndarray | None,
+    scale: float,
+) -> None:
+    """Draw each debris hypothesis with its own support/confirmation data —
+    never the scene-level aggregate. ``reference_to_current`` is None when the
+    target frame is already in reference/stabilized coordinates.
+
+    These regions come from unexplained foreground change, not semantic
+    object classification, and can visually overlap vehicles or the train
+    exclusion area — so the label says "UNKNOWN CHANGE", not a word implying
+    identification, and the box is dashed like a retained vehicle box, never
+    solid like a current tracked detection."""
+    for hypothesis in debris_hypotheses:
+        bbox = (
+            transform_bbox(hypothesis.bbox, reference_to_current)
+            if reference_to_current is not None else hypothesis.bbox
+        )
+        accent = _debris_accent(hypothesis)
+        title = _debris_title(hypothesis.hypothesis_id)
+        strip_lines: list[StripLine] = [_debris_status_line(hypothesis, accent)]
+        _draw_object_annotation(frame, bbox, title, strip_lines, accent, scale, dashed=True)
+
+
 def draw_frame(
     frame: np.ndarray,
     zoi_stabilized: np.ndarray,
     detections: list[DetectionRecord],
     status: CrossingStatus,
-    alert_cause: AlertCause | None,
-    occupancy_event: OccupancyEvent | None = None,
-    vehicle_occupancy_s: float = 0.0,
-    debris_present: bool = False,
-    debris_confirmed: bool = False,
-    debris_dwell_s: float = 0.0,
-    alert_s: float = 0.0,
+    reference_to_current: np.ndarray,
+    occupancy_events: tuple[OccupancyEvent, ...] = (),
+    debris_hypotheses: tuple[_DebrisHypothesis, ...] = (),
+    registration_valid: bool = True,
+    vehicle_alert_s: float = 3.0,
+    clear_confirmation_s: float = 2.0,
     train_context: str = "NONE",
 ) -> np.ndarray:
-    """Return an annotated copy of one BGR frame."""
+    """Return an annotated copy of one BGR (camera-frame) frame."""
     output, scale = frame.copy(), _ui_scale(frame.shape)
     _draw_zoi(output, zoi_stabilized, status, scale)
     for detection in detections:
-        if detection.in_zoi or detection.class_name.lower() == "train":
-            _draw_detection(output, detection, scale)
-    _draw_status_card(
-        output, status, alert_cause, occupancy_event,
-        vehicle_occupancy_s=vehicle_occupancy_s,
-        debris_present=debris_present,
-        debris_confirmed=debris_confirmed,
-        debris_dwell_s=debris_dwell_s,
-        alert_s=alert_s,
-        train_context=train_context,
+        if detection.class_name.lower() == "train":
+            _draw_train_detection(output, detection, scale)
+    fallback_rows = _draw_vehicle_annotations(
+        output, detections, occupancy_events, reference_to_current,
+        registration_valid, vehicle_alert_s, clear_confirmation_s, train_context, scale,
     )
+    _draw_debris_annotations(output, debris_hypotheses, reference_to_current, scale)
+    _draw_context_card(output, train_context, fallback_rows)
     return output
 
 
@@ -382,13 +669,15 @@ def draw_background_frame(
     frame: np.ndarray,
     zoi_points: np.ndarray,
     debris_mask: np.ndarray,
-    components: tuple[DebrisComponentObservation, ...],
-    min_candidate_ratio: float,
+    debris_hypotheses: tuple[_DebrisHypothesis, ...],
     debris_dwell_s: float,
     background_ready: bool,
     train_context: str,
 ) -> np.ndarray:
-    """Show the stabilized frame and the existing MOG2 debris evidence."""
+    """Show the stabilized frame, the raw MOG2 diagnostics, and each debris
+    hypothesis with the same per-object style used on the annotated video.
+    This frame is already in reference/stabilized coordinates, so hypothesis
+    boxes are drawn as-is, with no coordinate transform."""
     output, scale = frame.copy(), _ui_scale(frame.shape)
     active = debris_mask > 0
     change_pixels = int(np.count_nonzero(active))
@@ -402,21 +691,15 @@ def draw_background_frame(
         output, [np.asarray(zoi_points, dtype=np.int32)], True,
         _C_PRIMARY, line_width,
     )
-    candidates = [
-        component for component in components
-        if component.zoi_ratio >= min_candidate_ratio
-    ]
-    for component in candidates:
-        x1, y1, x2, y2 = component.bbox
-        cv2.rectangle(output, (x1, y1), (x2, y2), _C_CANDIDATE, line_width)
+    _draw_debris_annotations(output, debris_hypotheses, None, scale)
 
     if not background_ready:
         headline, color = "LEARNING BACKGROUND", _C_UNKNOWN
     elif train_context != "NONE":
         headline = f"SUPPRESSED - {train_context.replace('_', ' ')}"
         color = _C_TRAIN
-    elif candidates:
-        headline, color = "DEBRIS CANDIDATE", _C_CANDIDATE
+    elif debris_hypotheses:
+        headline, color = "UNKNOWN CHANGE", _C_CANDIDATE
     elif change_pixels:
         headline, color = "BACKGROUND CHANGE", _C_BACKGROUND
     else:

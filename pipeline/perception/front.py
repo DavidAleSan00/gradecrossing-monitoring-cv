@@ -43,6 +43,7 @@ class FramePerception:
     detections: list[DetectionRecord]
     background_frame: np.ndarray = field(repr=False)
     debris_mask: np.ndarray = field(repr=False)
+    reference_to_current: np.ndarray = field(repr=False)
 
 
 class PerceptionFront:
@@ -183,4 +184,5 @@ class PerceptionFront:
             detections=tracked.detections,
             background_frame=registered_frame,
             debris_mask=bg_result.debris_mask,
+            reference_to_current=transform,
         )

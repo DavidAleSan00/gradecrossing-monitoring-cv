@@ -1,6 +1,11 @@
 # Video manifest — register every video here before running the pipeline.
 
+
+
 videos:
+
+  # Youtube
+
   - id: clip01
     path: data/videos/youtube/clip01.mp4
     zoi: [[1308, 425], [310, 871], [13, 871], [6, 419], [496, 349], [562, 359], [768, 319], [978, 353], [862, 384], [1113, 410], [1261, 362], [1403, 384]]
@@ -29,6 +34,8 @@ videos:
     path: data/videos/youtube/clip07.mp4
     zoi: [[203, 130], [231, 124], [516, 355], [390, 359]]
 
+  # railway-dataset
+
   - id: 35th and Cornhusker Hwy - Trim 5
     path: data/videos/railway-dataset/35th and Cornhusker Hwy/2024-02-10_03-20-23 - Trim 5.mp4
     zoi: [[21, 562], [1896, 716], [1901, 882], [24, 702]]
@@ -52,3 +59,95 @@ videos:
   - id: 27th and NE Pkwy - Trim 1
     path: data/videos/railway-dataset/27th and NE Pkwy/2024-02-10_03-20-40 - Trim 1.mp4
     zoi: [[617, 547], [910, 563], [1288, 567], [1313, 598], [835, 588], [609, 575]]
+
+  # 10th_Street
+
+  # - id: DSCF0270
+  #   path: data/videos/10th_Street/DSCF0270.MP4
+  #   zoi:
+
+  # - id: DSCF0302
+  #   path: data/videos/10th_Street/DSCF0302.MP4
+  #   zoi:
+
+  - id: DSCF0304
+    path: data/videos/10th_Street/DSCF0304.MP4
+    zoi: [[463, 717], [925, 215], [757, 228], [3, 644], [4, 719]]
+
+  - id: DSCF0311
+    path: data/videos/10th_Street/DSCF0311.MP4
+    zoi: [[463, 717], [925, 215], [757, 228], [3, 644], [4, 719]]
+
+  - id: DSCF0315
+    path: data/videos/10th_Street/DSCF0315.MP4
+    zoi: [[463, 717], [925, 215], [757, 228], [3, 644], [4, 719]]
+
+  - id: DSCF0320
+    path: data/videos/10th_Street/DSCF0320.MP4
+    zoi: [[463, 717], [925, 215], [757, 228], [3, 644], [4, 719]]
+
+  - id: DSCF0344
+    path: data/videos/10th_Street/DSCF0344.MP4
+    zoi: [[463, 717], [925, 215], [757, 228], [3, 644], [4, 719]]
+
+  - id: DSCF0348
+    path: data/videos/10th_Street/DSCF0348.MP4
+    zoi: [[463, 717], [925, 215], [757, 228], [3, 644], [4, 719]]
+
+  - id: DSCF0373
+    path: data/videos/10th_Street/DSCF0373.MP4
+    zoi: [[463, 717], [925, 215], [757, 228], [3, 644], [4, 719]]
+
+  - id: DSCF0375
+    path: data/videos/10th_Street/DSCF0375.MP4
+    zoi: [[463, 717], [925, 215], [757, 228], [3, 644], [4, 719]]
+
+  - id: DSCF0390
+    path: data/videos/10th_Street/DSCF0390.MP4
+    zoi: [[463, 717], [925, 215], [757, 228], [3, 644], [4, 719]]
+
+  # Bicentennial_Street
+
+  # - id:
+  #   path:
+  #   zoi:
+
+  # - id:
+  #   path:
+  #   zoi:
+
+  # - id:
+  #   path:
+  #   zoi:
+
+  # - id:
+  #   path:
+  #   zoi:
+
+  # - id:
+  #   path:
+  #   zoi:
+
+  # - id:
+  #   path:
+  #   zoi:
+
+  # - id:
+  #   path:
+  #   zoi:
+
+  # - id:
+  #   path:
+  #   zoi:
+
+  # - id:
+  #   path:
+  #   zoi:
+
+  # - id:
+  #   path:
+  #   zoi:
+
+  # - id:
+  #   path:
+  #   zoi:

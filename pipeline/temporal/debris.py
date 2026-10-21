@@ -16,6 +16,7 @@ _MIN_TIME_CONSTANT_S = 1e-3
 
 @dataclass
 class _DebrisHypothesis:
+    hypothesis_id: int
     bbox: tuple[int, int, int, int]
     support: float
     started_at: float
@@ -27,6 +28,7 @@ class DebrisSupportEstimator:
         self._cfg = cfg
         self._hypotheses: list[_DebrisHypothesis] = []
         self._last_time: float | None = None
+        self._next_id = 0
 
     @property
     def support(self) -> float:
@@ -35,6 +37,11 @@ class DebrisSupportEstimator:
     @property
     def confirmed(self) -> bool:
         return any(item.confirmed for item in self._hypotheses)
+
+    @property
+    def hypotheses(self) -> tuple[_DebrisHypothesis, ...]:
+        """Read-only snapshot of current hypotheses, for display only."""
+        return tuple(self._hypotheses)
 
     @property
     def persistence_s(self) -> float:
@@ -105,7 +112,10 @@ class DebrisSupportEstimator:
         ]
         for ci, component in enumerate(components):
             if ci not in matched_components:
+                hypothesis_id = self._next_id
+                self._next_id += 1
                 self._hypotheses.append(_DebrisHypothesis(
+                    hypothesis_id=hypothesis_id,
                     bbox=component.bbox,
                     support=min(1.0, elapsed / rise_window_s),
                     started_at=max(0.0, obs.time_s - elapsed),

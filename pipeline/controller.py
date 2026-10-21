@@ -13,7 +13,6 @@ from typing import Any, Callable
 
 from .config import PipelineConfig, validate_config
 from .telemetry import (
-    ContinuousStateTimer,
     DetectionStats,
     FrameRecord,
     IntervalAccumulator,
@@ -149,7 +148,6 @@ def run_pipeline(
     source_time = 0.0
     alert_events = IntervalAccumulator()
     occupancy_events = IntervalAccumulator()
-    alert_timer = ContinuousStateTimer()
     detection_stats = DetectionStats()
     status_counts: Counter = Counter()
     train_context_counts: Counter = Counter()
@@ -215,9 +213,6 @@ def run_pipeline(
             alert_events.update(
                 processed_frame_count, frame_start_time, current_time, state.alert_cause,
             )
-            alert_s = alert_timer.update(
-                state.status == "OCCUPIED_ALERT", frame_start_time, current_time,
-            )
 
             occupancy_events.update(
                 processed_frame_count, frame_start_time, current_time,
@@ -243,13 +238,15 @@ def run_pipeline(
             if annotated_writer is not None:
                 frame_drawn = draw_frame(
                     frame, sense.zoi_stable, sense.detections,
-                    state.status, state.alert_cause,
-                    occupancy_event=state.active_event,
-                    vehicle_occupancy_s=state.occupancy_dwell_s,
-                    debris_present=state.debris_alert_fraction > 0.0,
-                    debris_confirmed=state.debris_alert_fraction >= 1.0,
-                    debris_dwell_s=state.debris_persistence_s,
-                    alert_s=alert_s,
+                    state.status, sense.reference_to_current,
+                    occupancy_events=state.occupancy_events,
+                    debris_hypotheses=state.debris_hypotheses,
+                    registration_valid=(
+                        sense.observations.registration_validity
+                        is ObservationValidity.VALID
+                    ),
+                    vehicle_alert_s=cfg.thresholds.vehicle_alert_s,
+                    clear_confirmation_s=cfg.occupancy.clear_confirmation_s,
                     train_context=train_context,
                 )
                 annotated_writer.write(frame_drawn)
@@ -257,8 +254,7 @@ def run_pipeline(
                     sense.background_frame,
                     zoi_points,
                     sense.debris_mask,
-                    sense.observations.debris_components,
-                    cfg.thresholds.debris_min_zoi_ratio,
+                    state.debris_hypotheses,
                     state.debris_persistence_s,
                     sense.observations.background_ready,
                     train_context,

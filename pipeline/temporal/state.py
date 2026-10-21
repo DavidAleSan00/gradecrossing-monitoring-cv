@@ -12,6 +12,7 @@ from ..config import PipelineConfig
 from ..perception.contracts import BackgroundResult, DetectionRecord
 
 if TYPE_CHECKING:
+    from .debris import _DebrisHypothesis
     from .occupancy import OccupancyEvent
 
 
@@ -147,6 +148,13 @@ class CrossingState:
     debris_persistence_s: float
     debris_alert_fraction: float
     active_event: "OccupancyEvent | None" = field(compare=False, repr=False)
+    # Read-only display data for the renderer; not consumed by decision logic.
+    occupancy_events: "tuple[OccupancyEvent, ...]" = field(
+        default=(), compare=False, repr=False,
+    )
+    debris_hypotheses: "tuple[_DebrisHypothesis, ...]" = field(
+        default=(), compare=False, repr=False,
+    )
 
 class CrossingStateMachine:
     """Update temporal evidence and emit one authoritative crossing state."""
@@ -183,4 +191,6 @@ class CrossingStateMachine:
             debris_persistence_s=self.debris.persistence_s,
             debris_alert_fraction=debris_fraction,
             active_event=active_event,
+            occupancy_events=self.occupancy.events,
+            debris_hypotheses=self.debris.hypotheses,
         )

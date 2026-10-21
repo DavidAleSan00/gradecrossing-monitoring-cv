@@ -57,20 +57,6 @@ class IntervalAccumulator:
         return list(self._events)
 
 
-class ContinuousStateTimer:
-    """Measure uninterrupted active time independently of changing labels."""
-
-    def __init__(self) -> None:
-        self._started_at: float | None = None
-
-    def update(self, active: bool, frame_start_s: float, frame_end_s: float) -> float:
-        if not active:
-            self._started_at = None
-            return 0.0
-        if self._started_at is None:
-            self._started_at = max(0.0, frame_start_s)
-        return max(0.0, frame_end_s - self._started_at)
-
 FRAME_RECORD_COLUMNS = [
     "frame", "time_s", "status", "alert_cause",
     "vehicle_detected_in_zoi", "vehicle_believed_present",
