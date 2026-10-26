@@ -58,11 +58,6 @@ class ZoiConfig:
 class OccupancyConfig:
     clear_confirmation_s: float = 2.0
     continuity_min_iou: float = 0.50
-    anchor_overlap_min: float = 0.50
-    # Reset the anchor on reconfirmation after this much counted absence.
-    # Foreground support and invalid registration pause absence counting;
-    # this is separate from the event's clear-confirmation window.
-    anchor_max_confirmation_gap_s: float = 1.0
     foreground_support_min_ratio: float = 0.10
     foreground_support_expand_ratio: float = 0.25
     foreground_support_min_area: int = 100
@@ -72,6 +67,7 @@ class OccupancyConfig:
 class ThresholdsConfig:
     debris_min_zoi_ratio: float = 0.02
     debris_match_iou: float = 0.10
+    # Must be positive so alerts require elapsed occupancy time.
     vehicle_alert_s: float = 3.0
     debris_alert_s: float = 2.0
     debris_clear_confirmation_s: float = 0.5
@@ -177,7 +173,6 @@ def validate_config(cfg: PipelineConfig) -> PipelineConfig:
         (zoi.vehicle_overlap_ratio, "zoi.vehicle_overlap_ratio", 0.0, 1.0),
         (zoi.train_occupancy_ratio, "zoi.train_occupancy_ratio", 0.0, 1.0),
         (occupancy.continuity_min_iou, "occupancy.continuity_min_iou", 1e-9, 1.0),
-        (occupancy.anchor_overlap_min, "occupancy.anchor_overlap_min", 1e-9, 1.0),
         (occupancy.foreground_support_min_ratio, "occupancy.foreground_support_min_ratio", 0.0, 1.0),
         (thresholds.debris_min_zoi_ratio, "thresholds.debris_min_zoi_ratio", 0.0, 1.0),
         (thresholds.debris_match_iou, "thresholds.debris_match_iou", 1e-9, 1.0),
@@ -188,9 +183,8 @@ def validate_config(cfg: PipelineConfig) -> PipelineConfig:
         (bg.var_threshold, "background.var_threshold", False),
         (zoi.train_exclusion_grace_s, "zoi.train_exclusion_grace_s", True),
         (occupancy.clear_confirmation_s, "occupancy.clear_confirmation_s", True),
-        (occupancy.anchor_max_confirmation_gap_s, "occupancy.anchor_max_confirmation_gap_s", False),
         (occupancy.foreground_support_expand_ratio, "occupancy.foreground_support_expand_ratio", True),
-        (thresholds.vehicle_alert_s, "thresholds.vehicle_alert_s", True),
+        (thresholds.vehicle_alert_s, "thresholds.vehicle_alert_s", False),
         (thresholds.debris_alert_s, "thresholds.debris_alert_s", True),
         (thresholds.debris_clear_confirmation_s, "thresholds.debris_clear_confirmation_s", True),
     ):

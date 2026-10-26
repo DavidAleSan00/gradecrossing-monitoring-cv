@@ -37,8 +37,6 @@
 # occupancy:
 #   clear_confirmation_s: 2.0
 #   continuity_min_iou: 0.50
-#   anchor_overlap_min: 0.50
-#   anchor_max_confirmation_gap_s: 1.0
 #   foreground_support_min_ratio: 0.10
 #   foreground_support_expand_ratio: 0.25
 #   foreground_support_min_area: 100

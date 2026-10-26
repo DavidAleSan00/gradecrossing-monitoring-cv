@@ -144,7 +144,6 @@ class CrossingState:
     status: CrossingStatus
     alert_cause: AlertCause | None
     occupancy_dwell_s: float
-    vehicle_near_anchor_s: float
     vehicle_alert_fraction: float
     debris_persistence_s: float
     debris_alert_fraction: float
@@ -172,11 +171,8 @@ class CrossingStateMachine:
         active_event = self.occupancy.update(obs)
         debris_fraction = self.debris.update(obs)
         occupancy_dwell_s = active_event.dwell_s if active_event else 0.0
-        # Freeze vehicle progress while unmatched. An alerted event retains its
-        # progress until it clears or a new confirmation resets its anchor.
-        vehicle_near_anchor_s = active_event.last_confirmed_anchor_s if active_event else 0.0
         vehicle_fraction = normalized_progress(
-            vehicle_near_anchor_s,
+            occupancy_dwell_s,
             self._cfg.thresholds.vehicle_alert_s,
             active=active_event is not None,
         )
@@ -191,7 +187,6 @@ class CrossingStateMachine:
             status=status,
             alert_cause=cause,
             occupancy_dwell_s=occupancy_dwell_s,
-            vehicle_near_anchor_s=vehicle_near_anchor_s,
             vehicle_alert_fraction=vehicle_fraction,
             debris_persistence_s=self.debris.persistence_s,
             debris_alert_fraction=debris_fraction,

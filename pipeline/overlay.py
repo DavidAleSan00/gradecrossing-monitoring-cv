@@ -28,10 +28,6 @@ _C_SUB = (185, 185, 185)
 _C_BACKGROUND = (210, 60, 210)
 _C_CANDIDATE = (0, 215, 255)
 
-# Hide retained markers for brief detection flicker. Display-only threshold;
-# alert decisions use PipelineConfig.
-_LAST_KNOWN_MIN_CONFIRMED_S = 0.5
-
 
 def _accent(status: CrossingStatus) -> Color:
     return {
@@ -464,12 +460,12 @@ def _draw_object_annotation(
 
 
 def _vehicle_accent(event: OccupancyEvent, vehicle_alert_s: float) -> Color:
-    return _C_ALERT if event.anchor_near_s >= vehicle_alert_s else _C_MONITORING
+    return _C_ALERT if event.dwell_s >= vehicle_alert_s else _C_MONITORING
 
 
 def _vehicle_status_line(event: OccupancyEvent, vehicle_alert_s: float, accent: Color) -> StripLine:
-    status_word = "ALERT" if event.anchor_near_s >= vehicle_alert_s else "MONITORING"
-    return f"{status_word} {event.anchor_near_s:.1f}s", accent
+    status_word = "ALERT" if event.dwell_s >= vehicle_alert_s else "MONITORING"
+    return f"{status_word} {event.dwell_s:.1f}s", accent
 
 
 def _clearance_note(
@@ -548,7 +544,7 @@ def _draw_vehicle_annotations(
 
     Confirmed events use their associated detection's box and class when
     available, otherwise the event's transformed last box and a generic title.
-    Uncertain events with enough confirmed anchor time receive a small pin.
+    Uncertain events receive a small pin at their last known position.
     During train passage or grace, retained evidence appears in the corner
     card instead. Association belongs to the occupancy estimator.
     """
@@ -587,23 +583,17 @@ def _draw_vehicle_annotations(
             )
             continue
 
-        # Use frozen confirmed time to suppress brief flicker; wall-clock event
-        # and anchor age keep advancing while the detection is absent.
         if event.last_box is None:
             continue
-        if event.last_confirmed_anchor_s < _LAST_KNOWN_MIN_CONFIRMED_S:
-            continue
-        retained_word = "ALERT" if event.last_confirmed_anchor_s >= vehicle_alert_s else "MONITORING"
-        retained_accent = _C_ALERT if retained_word == "ALERT" else _C_MONITORING
         clearance = _clearance_note(event, registration_valid, clear_confirmation_s)
-        retained_text = f"{retained_word} {event.last_confirmed_anchor_s:.1f}s | {clearance}"
+        retained_text = f"{status_text} | {clearance}"
         if train_context in {"TRAIN_PASSING", "TRAIN_GRACE"}:
             label = f"Retained vehicle #{track_id}" if track_id is not None else "Retained vehicle"
-            fallback_rows.append((label, retained_text, retained_accent))
+            fallback_rows.append((label, retained_text, accent))
             continue
         bbox = transform_bbox(event.last_box, reference_to_current)
         center = ((bbox[0] + bbox[2]) // 2, (bbox[1] + bbox[3]) // 2)
-        _draw_last_known_pin(frame, center, retained_text, retained_accent, scale)
+        _draw_last_known_pin(frame, center, retained_text, accent, scale)
 
     # A tracked, in-zoi vehicle detection with no occupancy event at all this
     # frame (e.g. train visibility suppressed new vehicle evidence) is still

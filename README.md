@@ -19,7 +19,7 @@ do not prove that a situation is dangerous.
 - Stabilizes the video so the ZOI stays aligned when the camera moves slightly.
 - Detects and tracks vehicles using YOLO and BoT-SORT.
 - Checks whether each vehicle overlaps the ZOI.
-- Measures how long a vehicle stays near a fixed image position in the ZOI.
+- Measures how long a vehicle occupancy event persists in the ZOI.
 - Uses background change detection to look for unknown objects or debris.
 - Recognizes train passage so normal train motion does not become a hazard.
 - Produces annotated videos and supporting evidence for review.
@@ -41,10 +41,9 @@ CLEAR / OCCUPIED - MONITORING / OCCUPIED - ALERT
 ```
 
 Vehicle and debris evidence are evaluated separately. Vehicle alert progress
-uses time near a fixed bounding-box anchor in the ZOI. The anchor resets when
-box overlap falls below its threshold or counted detection absence exceeds
-the configured gap limit. Progress freezes while the event is unmatched.
-Total event age (`vehicle_dwell_s` in the CSV) is tracked separately.
+uses occupancy-event age (`vehicle_dwell_s` in the CSV). Movement within the
+ZOI does not reset it. Dwell continues during detection gaps until the event
+clears through confirmed observable absence.
 
 Debris evidence comes from a persistent background change that is not explained
 by a detected object. Train detections suppress vehicle confirmations and mask
@@ -57,7 +56,7 @@ clearance rules. Train passage alone does not trigger an alert.
 |--------|---------|
 | `CLEAR` | No current vehicle occupancy or persistent debris evidence. |
 | `OCCUPIED - MONITORING` | Something is present, but it has not reached an alert threshold. |
-| `OCCUPIED - ALERT` | Confirmed vehicle anchor time or debris persistence reached its configured threshold. |
+| `OCCUPIED - ALERT` | Vehicle dwell or debris persistence reached its configured threshold. |
 
 The progress values used to reach these states are timers, not confidence
 scores or probabilities.
@@ -72,11 +71,10 @@ scores or probabilities.
   and does not transfer automatically to a different camera view.
 - **YOLO can miss or misclassify objects.** The project currently uses a general
   pretrained model rather than a crossing-specific model.
-- **Box overlap only approximates standing still.** Slow motion or motion toward
-  the camera can retain enough overlap to accumulate vehicle alert time.
-- **The gap limit uses counted absence.** Foreground support and invalid
-  registration pause this counter. A long gap protected by either can still
-  be credited to the anchor timer when a detection returns at the same spot.
+- **Vehicle dwell measures event age, not stationary time.** Moving vehicles
+  can alert if their event lasts long enough. Foreground support can preserve
+  an event and its alert indefinitely; a later vehicle can inherit its timer
+  if associated with that event.
 - **Background detection is sensitive to appearance changes.** Shadows,
   lighting, weather, camera movement, and train motion can resemble debris.
 - **Background warm-up assumes the crossing begins clear.** A stationary object
@@ -212,7 +210,7 @@ Every run writes the exact resolved values to `<run_dir>/config_used.yaml`.
 #### Operator Display
 
 The annotated video shows the current crossing status, the ZOI, relevant object
-boxes, vehicle anchor time, debris persistence, and train context. The display adapts
+boxes, vehicle dwell, debris persistence, and train context. The display adapts
 to different video sizes, while additional diagnostic details remain available
 in `debug_timeline.csv`.
 
