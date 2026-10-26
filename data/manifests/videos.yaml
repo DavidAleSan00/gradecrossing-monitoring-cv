@@ -62,13 +62,13 @@ videos:
 
   # 10th_Street
 
-  # - id: DSCF0270
-  #   path: data/videos/10th_Street/DSCF0270.MP4
-  #   zoi:
+  - id: DSCF0270
+    path: data/videos/10th_Street/DSCF0270.MP4
+    zoi: [[463, 717], [925, 215], [757, 228], [3, 644], [4, 719]]
 
-  # - id: DSCF0302
-  #   path: data/videos/10th_Street/DSCF0302.MP4
-  #   zoi:
+  - id: DSCF0302
+    path: data/videos/10th_Street/DSCF0302.MP4
+    zoi: [[463, 717], [925, 215], [757, 228], [3, 644], [4, 719]]
 
   - id: DSCF0304
     path: data/videos/10th_Street/DSCF0304.MP4
@@ -108,46 +108,50 @@ videos:
 
   # Bicentennial_Street
 
-  # - id:
-  #   path:
-  #   zoi:
+  - id: DSCF0017
+    path: data/videos/Bicentennial_Street/DSCF0017.MP4
+    zoi: [[0, 264], [1278, 643], [1279, 517], [109, 245]]
 
-  # - id:
-  #   path:
-  #   zoi:
+  - id: DSCF0015
+    path: data/videos/Bicentennial_Street/DSCF0015.MP4
+    zoi: [[0, 264], [1278, 643], [1279, 517], [109, 245]]
 
-  # - id:
-  #   path:
-  #   zoi:
+  - id: DSCF0009
+    path: data/videos/Bicentennial_Street/DSCF0009.MP4
+    zoi: [[0, 264], [1278, 643], [1279, 517], [109, 245]]
 
-  # - id:
-  #   path:
-  #   zoi:
+  - id: DSCF0022
+    path: data/videos/Bicentennial_Street/DSCF0022.MP4
+    zoi: [[0, 264], [1278, 643], [1279, 517], [109, 245]]
 
-  # - id:
-  #   path:
-  #   zoi:
+  - id: DSCF0053
+    path: data/videos/Bicentennial_Street/DSCF0053.MP4
+    zoi: [[0, 264], [1278, 643], [1279, 517], [109, 245]]
 
-  # - id:
-  #   path:
-  #   zoi:
+  - id: DSCF0064
+    path: data/videos/Bicentennial_Street/DSCF0064.MP4
+    zoi: [[0, 264], [1278, 643], [1279, 517], [109, 245]]
 
-  # - id:
-  #   path:
-  #   zoi:
+  - id: DSCF0066
+    path: data/videos/Bicentennial_Street/DSCF0066.MP4
+    zoi: [[0, 264], [1278, 643], [1279, 517], [109, 245]]
 
-  # - id:
-  #   path:
-  #   zoi:
+  - id: DSCF0069
+    path: data/videos/Bicentennial_Street/DSCF0069.MP4
+    zoi: [[0, 264], [1278, 643], [1279, 517], [109, 245]]
 
-  # - id:
-  #   path:
-  #   zoi:
+  - id: DSCF0350
+    path: data/videos/Bicentennial_Street/DSCF0350.MP4
+    zoi: [[0, 264], [1278, 643], [1279, 517], [109, 245]]
 
-  # - id:
-  #   path:
-  #   zoi:
+  - id: DSCF0383
+    path: data/videos/Bicentennial_Street/DSCF0383.MP4
+    zoi: [[0, 264], [1278, 643], [1279, 517], [109, 245]]
 
-  # - id:
-  #   path:
-  #   zoi:
+  - id: DSCF0384
+    path: data/videos/Bicentennial_Street/DSCF0384.MP4
+    zoi: [[0, 264], [1278, 643], [1279, 517], [109, 245]]
+
+  - id: DSCF0385
+    path: data/videos/Bicentennial_Street/DSCF0385.MP4
+    zoi: [[0, 264], [1278, 643], [1279, 517], [109, 245]]

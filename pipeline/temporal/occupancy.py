@@ -41,6 +41,14 @@ class OccupancyEvent:
     last_box: tuple[int, int, int, int] | None = None
     evidence_source: str = "SEMANTIC"
     observable_absence_s: float = 0.0
+    # Fixed reference position, reset on movement or excessive counted absence.
+    # Anchor age is separate from dwell_s, which measures total event age.
+    anchor_box: tuple[int, int, int, int] | None = None
+    anchor_set_at: float = 0.0
+    anchor_near_s: float = 0.0
+    # Alert/display timer: frozen while unmatched. Reconfirmation copies the
+    # wall-clock anchor age, including any gap that does not reset the anchor.
+    last_confirmed_anchor_s: float = 0.0
 
 
 def compute_foreground_support(
@@ -98,15 +106,39 @@ class OccupancySupportEstimator:
             ),
             last_box=det.bbox,
             evidence_source="SEMANTIC",
+            anchor_box=det.bbox,
+            anchor_set_at=time_s,
         )
 
-    @staticmethod
-    def _confirm(event: OccupancyEvent, det: DetectionRecord) -> None:
+    def _anchor_moved(self, bbox: tuple[int, int, int, int], anchor_box: tuple[int, int, int, int]) -> bool:
+        """Compare pixel-box overlap with the fixed anchor.
+
+        Slow motion or motion toward the camera can retain high overlap and
+        be mistaken for standing still.
+        """
+        return compute_iou(bbox, anchor_box) < self._cfg.occupancy.anchor_overlap_min
+
+    def _confirm(
+        self, event: OccupancyEvent, det: DetectionRecord, time_s: float,
+    ) -> None:
+        # Read counted absence before confirmation resets it. Foreground support
+        # and invalid registration pause this counter, so long gaps protected by
+        # either can still contribute their full duration on reconfirmation.
+        observed_gap_s = event.observable_absence_s
         event.current_track_ids = {det.track_id} if det.track_id is not None else set()
         event.last_box = det.bbox
         event.occupancy_state = OccupancyState.OCCUPIED
         event.evidence_source = "SEMANTIC"
         event.observable_absence_s = 0.0
+        gap_too_long = observed_gap_s > self._cfg.occupancy.anchor_max_confirmation_gap_s
+        anchor_reset = (
+            event.anchor_box is None
+            or self._anchor_moved(det.bbox, event.anchor_box)
+            or gap_too_long
+        )
+        if anchor_reset:
+            event.anchor_box = det.bbox
+            event.anchor_set_at = time_s
 
     def _associate(self, detections: list[DetectionRecord], time_s: float) -> set[int]:
         matched_events: set[int] = set()
@@ -128,7 +160,8 @@ class OccupancySupportEstimator:
             )
             for di, ei in enumerate(assignments):
                 if ei >= 0 and scores[di, ei] > 0:
-                    self._confirm(self._events[ei], detections[di])
+                    event, det = self._events[ei], detections[di]
+                    self._confirm(event, det, time_s)
                     matched_events.add(ei)
                     matched_detections.add(di)
         for di, det in enumerate(detections):
@@ -163,6 +196,8 @@ class OccupancySupportEstimator:
         for index, event in enumerate(self._events):
             if index in matched:
                 event.dwell_s = max(0.0, obs.time_s - event.started_at)
+                event.anchor_near_s = max(0.0, obs.time_s - event.anchor_set_at)
+                event.last_confirmed_anchor_s = event.anchor_near_s
                 continue
             if registration_valid:
                 event.current_track_ids = set()
@@ -191,6 +226,7 @@ class OccupancySupportEstimator:
             if absence_observed:
                 event.observable_absence_s += elapsed
             event.dwell_s = max(0.0, obs.time_s - event.started_at)
+            event.anchor_near_s = max(0.0, obs.time_s - event.anchor_set_at)
 
         clear_window = self._clear_window()
         self._events = [
@@ -200,7 +236,7 @@ class OccupancySupportEstimator:
         return max(
             self._events,
             key=lambda event: (
-                event.dwell_s >= self._cfg.thresholds.vehicle_alert_s,
+                event.last_confirmed_anchor_s >= self._cfg.thresholds.vehicle_alert_s,
                 event.occupancy_state is OccupancyState.OCCUPIED,
                 -event.observable_absence_s,
                 event.dwell_s,

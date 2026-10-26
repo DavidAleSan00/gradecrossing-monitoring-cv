@@ -19,7 +19,7 @@ do not prove that a situation is dangerous.
 - Stabilizes the video so the ZOI stays aligned when the camera moves slightly.
 - Detects and tracks vehicles using YOLO and BoT-SORT.
 - Checks whether each vehicle overlaps the ZOI.
-- Measures how long a vehicle continues occupying the crossing.
+- Measures how long a vehicle stays near a fixed image position in the ZOI.
 - Uses background change detection to look for unknown objects or debris.
 - Recognizes train passage so normal train motion does not become a hazard.
 - Produces annotated videos and supporting evidence for review.
@@ -40,11 +40,16 @@ Vehicle occupancy + background-change evidence
 CLEAR / OCCUPIED - MONITORING / OCCUPIED - ALERT
 ```
 
-Vehicle and debris evidence are evaluated separately. Vehicle evidence comes
-from a tracked vehicle remaining in the ZOI. Debris evidence comes from a
-persistent background change that is not explained by a detected object. A
-train is recorded as scene context, but train passage does not itself change
-the crossing's hazard status.
+Vehicle and debris evidence are evaluated separately. Vehicle alert progress
+uses time near a fixed bounding-box anchor in the ZOI. The anchor resets when
+box overlap falls below its threshold or counted detection absence exceeds
+the configured gap limit. Progress freezes while the event is unmatched.
+Total event age (`vehicle_dwell_s` in the CSV) is tracked separately.
+
+Debris evidence comes from a persistent background change that is not explained
+by a detected object. Train detections suppress vehicle confirmations and mask
+train pixels in the debris channel; existing vehicle events still follow their
+clearance rules. Train passage alone does not trigger an alert.
 
 ## Understanding the Status
 
@@ -52,14 +57,14 @@ the crossing's hazard status.
 |--------|---------|
 | `CLEAR` | No current vehicle occupancy or persistent debris evidence. |
 | `OCCUPIED - MONITORING` | Something is present, but it has not reached an alert threshold. |
-| `OCCUPIED - ALERT` | Vehicle dwell or debris persistence reached its configured threshold. |
+| `OCCUPIED - ALERT` | Confirmed vehicle anchor time or debris persistence reached its configured threshold. |
 
 The progress values used to reach these states are timers, not confidence
 scores or probabilities.
 
 ## Important Limitations
 
-- **The dwell timer is an evaluation rule.** The default alert time is useful
+- **The alert timer is an evaluation rule.** The default alert time is useful
   for comparing videos, but it is not a validated railroad-safety threshold.
 - **An alert means persistence, not confirmed danger.** The pipeline cannot
   determine intent, mechanical condition, or whether an object can leave safely.
@@ -67,6 +72,11 @@ scores or probabilities.
   and does not transfer automatically to a different camera view.
 - **YOLO can miss or misclassify objects.** The project currently uses a general
   pretrained model rather than a crossing-specific model.
+- **Box overlap only approximates standing still.** Slow motion or motion toward
+  the camera can retain enough overlap to accumulate vehicle alert time.
+- **The gap limit uses counted absence.** Foreground support and invalid
+  registration pause this counter. A long gap protected by either can still
+  be credited to the anchor timer when a detection returns at the same spot.
 - **Background detection is sensitive to appearance changes.** Shadows,
   lighting, weather, camera movement, and train motion can resemble debris.
 - **Background warm-up assumes the crossing begins clear.** A stationary object
@@ -131,7 +141,7 @@ Each run writes one self-contained directory,
 |----------|----------|
 | `annotated_video.mp4` | Primary ZOI, vehicle, train, monitoring, and alert view |
 | `background_video.mp4` | Stabilized MOG2 view: magenta background changes, yellow debris candidates, persistence, and train suppression |
-| `debug_timeline.csv` | Seventeen readable columns covering vehicle/train detections, retained state, registration, background changes, alert progress, final status, and cause |
+| `debug_timeline.csv` | Per-frame detections, retained state, event age, alert progress/cause, background readiness, and train context |
 | `summary.json` | Run/video identity, performance, occupancy and alert intervals, configured ZOI, and artifact filenames |
 | `config_used.yaml` | Exact resolved configuration used by the run |
 
@@ -202,7 +212,7 @@ Every run writes the exact resolved values to `<run_dir>/config_used.yaml`.
 #### Operator Display
 
 The annotated video shows the current crossing status, the ZOI, relevant object
-boxes, vehicle dwell, debris persistence, and train context. The display adapts
+boxes, vehicle anchor time, debris persistence, and train context. The display adapts
 to different video sizes, while additional diagnostic details remain available
 in `debug_timeline.csv`.
 

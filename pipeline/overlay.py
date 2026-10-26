@@ -28,6 +28,10 @@ _C_SUB = (185, 185, 185)
 _C_BACKGROUND = (210, 60, 210)
 _C_CANDIDATE = (0, 215, 255)
 
+# Hide retained markers for brief detection flicker. Display-only threshold;
+# alert decisions use PipelineConfig.
+_LAST_KNOWN_MIN_CONFIRMED_S = 0.5
+
 
 def _accent(status: CrossingStatus) -> Color:
     return {
@@ -253,7 +257,7 @@ def _draw_zoi(
 
 
 def _draw_train_detection(frame: np.ndarray, detection: DetectionRecord, scale: float) -> None:
-    """Preserve the pre-redesign train box/label exactly; trains keep their own style."""
+    """Draw a train box and label in the train context color."""
     x1, y1, x2, y2 = detection.bbox
     height, width = frame.shape[:2]
     color = _C_TRAIN
@@ -332,9 +336,7 @@ def _dashed_rectangle(
     dash_len: int = 6,
     gap_len: int = 5,
 ) -> None:
-    """A dashed box outline — the visual marker for inferred/non-semantic
-    regions (a vehicle's last-known location, an unclassified change area),
-    as opposed to the solid outline used for a current tracked detection."""
+    """Draw a dashed outline for an inferred region such as a debris candidate."""
     x1, y1 = pt1
     x2, y2 = pt2
 
@@ -393,9 +395,10 @@ def _draw_object_annotation(
     box_thickness: int | None = None,
     dashed: bool = False,
 ) -> None:
-    """Shared vehicle/debris drawing: box, title above, compact strip below.
-    ``dashed`` marks an inferred/non-semantic region (a last-known vehicle
-    location, an unclassified change area) rather than a current detection."""
+    """Draw a box, title above, and compact strip below.
+
+    ``dashed`` marks an inferred region such as an unclassified change area.
+    """
     height, width = frame.shape[:2]
     x1, y1, x2, y2 = bbox
     # A box with no overlap with the visible frame has nothing to anchor a
@@ -461,12 +464,12 @@ def _draw_object_annotation(
 
 
 def _vehicle_accent(event: OccupancyEvent, vehicle_alert_s: float) -> Color:
-    return _C_ALERT if event.dwell_s >= vehicle_alert_s else _C_MONITORING
+    return _C_ALERT if event.anchor_near_s >= vehicle_alert_s else _C_MONITORING
 
 
 def _vehicle_status_line(event: OccupancyEvent, vehicle_alert_s: float, accent: Color) -> StripLine:
-    status_word = "ALERT" if event.dwell_s >= vehicle_alert_s else "MONITORING"
-    return f"{status_word} {event.dwell_s:.1f}s", accent
+    status_word = "ALERT" if event.anchor_near_s >= vehicle_alert_s else "MONITORING"
+    return f"{status_word} {event.anchor_near_s:.1f}s", accent
 
 
 def _clearance_note(
@@ -480,6 +483,42 @@ def _clearance_note(
         return "RETAINED (NO REG)"
     remaining = max(0.0, clear_confirmation_s - event.observable_absence_s)
     return f"CLEARING {remaining:.1f}s"
+
+
+def _draw_last_known_pin(
+    frame: np.ndarray,
+    center: tuple[int, int],
+    text: str,
+    accent: Color,
+    scale: float,
+) -> None:
+    """Draw a dot and compact label at the vehicle's last known position."""
+    height, width = frame.shape[:2]
+    cx, cy = center
+    radius = max(3, round(5 * scale))
+    cv2.circle(frame, (cx, cy), radius, accent, -1, cv2.LINE_AA)
+    cv2.circle(frame, (cx, cy), radius, _C_PRIMARY, max(1, round(scale)), cv2.LINE_AA)
+
+    text_scale, text_thickness = max(0.26, 0.42 * scale), max(1, round(scale))
+    pad_x, pad_y = max(3, round(4 * scale)), max(2, round(3 * scale))
+    (text_w, text_h), baseline = cv2.getTextSize(
+        text, cv2.FONT_HERSHEY_SIMPLEX, text_scale, text_thickness,
+    )
+    block_w = text_w + 2 * pad_x
+    block_h = text_h + baseline + 2 * pad_y
+
+    gap = max(4, round(6 * scale))
+    left = cx + radius + gap
+    if left + block_w > width:
+        left = cx - radius - gap - block_w
+    left = max(0, min(left, max(0, width - block_w)))
+    top = max(0, min(cy - block_h // 2, max(0, height - block_h)))
+
+    _translucent_rect(frame, (left, top, left + block_w, top + block_h), 0.80, _C_PANEL)
+    _put(
+        frame, text, (left + pad_x, top + pad_y + text_h),
+        text_scale, text_thickness, accent,
+    )
 
 
 def _vehicle_title(class_name: str | None, track_id: int | None, *, last_known: bool) -> str:
@@ -505,24 +544,13 @@ def _draw_vehicle_annotations(
     train_context: str,
     scale: float,
 ) -> list[Row]:
-    """Draw each occupancy event, keyed by its own ``occupancy_state`` rather
-    than by whether a same-ID detection happens to exist this frame — that
-    distinction is what separates a confirmed live match from a track ID the
-    estimator kept only because registration failed (see _clearance_note).
+    """Draw confirmed vehicle boxes and retained position pins.
 
-    OCCUPIED: drawn solid, using the live camera-frame detection for its
-    class name and precise box when one is found by ID (not new matching —
-    ``current_track_ids`` is the estimator's own association result; this is
-    a lookup into it). Falls back to the event's own last_box/generic title
-    for an untracked (track_id is None) vehicle, which otherwise has no way
-    to be found by ID at all.
-
-    UNCERTAIN: never a live box. Drawn dashed with explicit "(LAST KNOWN)"
-    wording, from event.last_box transformed into camera coordinates — except
-    during train passage/grace, where that location is also where the train
-    is, so instead of drawing a box over the train we return a corner-card
-    row for the caller to render, keeping the alarm visible without implying
-    the box identifies what the train detector currently sees there.
+    Confirmed events use their associated detection's box and class when
+    available, otherwise the event's transformed last box and a generic title.
+    Uncertain events with enough confirmed anchor time receive a small pin.
+    During train passage or grace, retained evidence appears in the corner
+    card instead. Association belongs to the occupancy estimator.
     """
     detections_by_track: dict[int, DetectionRecord] = {
         detection.track_id: detection
@@ -559,20 +587,23 @@ def _draw_vehicle_annotations(
             )
             continue
 
-        # UNCERTAIN: retained/last-known evidence, never presented as a live match.
+        # Use frozen confirmed time to suppress brief flicker; wall-clock event
+        # and anchor age keep advancing while the detection is absent.
         if event.last_box is None:
             continue
+        if event.last_confirmed_anchor_s < _LAST_KNOWN_MIN_CONFIRMED_S:
+            continue
+        retained_word = "ALERT" if event.last_confirmed_anchor_s >= vehicle_alert_s else "MONITORING"
+        retained_accent = _C_ALERT if retained_word == "ALERT" else _C_MONITORING
         clearance = _clearance_note(event, registration_valid, clear_confirmation_s)
+        retained_text = f"{retained_word} {event.last_confirmed_anchor_s:.1f}s | {clearance}"
         if train_context in {"TRAIN_PASSING", "TRAIN_GRACE"}:
             label = f"Retained vehicle #{track_id}" if track_id is not None else "Retained vehicle"
-            fallback_rows.append((label, f"{status_text} | {clearance}", accent))
+            fallback_rows.append((label, retained_text, retained_accent))
             continue
         bbox = transform_bbox(event.last_box, reference_to_current)
-        title = _vehicle_title(None, track_id, last_known=True)
-        _draw_object_annotation(
-            frame, bbox, title, [(status_text, accent), (clearance, _C_SUB)], accent, scale,
-            box_thickness=max(1, round(scale)), dashed=True,
-        )
+        center = ((bbox[0] + bbox[2]) // 2, (bbox[1] + bbox[3]) // 2)
+        _draw_last_known_pin(frame, center, retained_text, retained_accent, scale)
 
     # A tracked, in-zoi vehicle detection with no occupancy event at all this
     # frame (e.g. train visibility suppressed new vehicle evidence) is still
