@@ -41,6 +41,17 @@ class OccupancyEvent:
     last_box: tuple[int, int, int, int] | None = None
     evidence_source: str = "SEMANTIC"
     observable_absence_s: float = 0.0
+    # Fixed reference, reset on movement or an excessive unconfirmed gap.
+    # Anchor age is separate from total event age (dwell_s).
+    anchor_box: tuple[int, int, int, int] | None = None
+    anchor_set_at: float = 0.0
+    anchor_near_s: float = 0.0
+    # Alert/display timer: frozen while unmatched, zeroed on excessive
+    # protected gaps. Reconfirmation copies anchor age unless it resets.
+    last_confirmed_anchor_s: float = 0.0
+    # Accumulated unmatched time; foreground and invalid registration do
+    # not pause it. _confirm() includes the final interval on return.
+    unconfirmed_elapsed_s: float = 0.0
 
 
 def compute_foreground_support(
@@ -98,17 +109,48 @@ class OccupancySupportEstimator:
             ),
             last_box=det.bbox,
             evidence_source="SEMANTIC",
+            anchor_box=det.bbox,
+            anchor_set_at=time_s,
         )
 
-    @staticmethod
-    def _confirm(event: OccupancyEvent, det: DetectionRecord) -> None:
+    def _anchor_moved(self, bbox: tuple[int, int, int, int], anchor_box: tuple[int, int, int, int]) -> bool:
+        """Compare pixel-box overlap with the fixed anchor.
+
+        Slow motion or motion toward the camera can retain high overlap and
+        be mistaken for standing still.
+        """
+        return compute_iou(bbox, anchor_box) < self._cfg.occupancy.anchor_overlap_min
+
+    def _confirm(
+        self, event: OccupancyEvent, det: DetectionRecord, time_s: float,
+        elapsed: float,
+    ) -> None:
+        # After an unmatched observation, include the interval ending at this
+        # confirmation. Consecutive matched observations have no detection gap.
+        real_gap_s = (
+            event.unconfirmed_elapsed_s + elapsed
+            if event.unconfirmed_elapsed_s > 0.0
+            else 0.0
+        )
         event.current_track_ids = {det.track_id} if det.track_id is not None else set()
         event.last_box = det.bbox
         event.occupancy_state = OccupancyState.OCCUPIED
         event.evidence_source = "SEMANTIC"
         event.observable_absence_s = 0.0
+        event.unconfirmed_elapsed_s = 0.0
+        gap_too_long = real_gap_s > self._cfg.occupancy.anchor_max_confirmation_gap_s
+        anchor_reset = (
+            event.anchor_box is None
+            or self._anchor_moved(det.bbox, event.anchor_box)
+            or gap_too_long
+        )
+        if anchor_reset:
+            event.anchor_box = det.bbox
+            event.anchor_set_at = time_s
 
-    def _associate(self, detections: list[DetectionRecord], time_s: float) -> set[int]:
+    def _associate(
+        self, detections: list[DetectionRecord], time_s: float, elapsed: float,
+    ) -> set[int]:
         matched_events: set[int] = set()
         matched_detections: set[int] = set()
         if detections and self._events:
@@ -128,7 +170,8 @@ class OccupancySupportEstimator:
             )
             for di, ei in enumerate(assignments):
                 if ei >= 0 and scores[di, ei] > 0:
-                    self._confirm(self._events[ei], detections[di])
+                    event, det = self._events[ei], detections[di]
+                    self._confirm(event, det, time_s, elapsed)
                     matched_events.add(ei)
                     matched_detections.add(di)
         for di, det in enumerate(detections):
@@ -155,7 +198,7 @@ class OccupancySupportEstimator:
             det for det in obs.detections
             if det.in_zoi and det.class_id in vehicle_ids
         ] if registration_valid and not train_visible else []
-        matched = self._associate(vehicle_detections, obs.time_s)
+        matched = self._associate(vehicle_detections, obs.time_s, elapsed)
         # YOLO runs on every processed frame, so detections are trustworthy —
         # and absence is observable — exactly when registration succeeded.
         observable = registration_valid
@@ -163,6 +206,8 @@ class OccupancySupportEstimator:
         for index, event in enumerate(self._events):
             if index in matched:
                 event.dwell_s = max(0.0, obs.time_s - event.started_at)
+                event.anchor_near_s = max(0.0, obs.time_s - event.anchor_set_at)
+                event.last_confirmed_anchor_s = event.anchor_near_s
                 continue
             if registration_valid:
                 event.current_track_ids = set()
@@ -190,7 +235,18 @@ class OccupancySupportEstimator:
                 absence_observed = observable
             if absence_observed:
                 event.observable_absence_s += elapsed
+            # Count unmatched time even while clearance is paused.
+            event.unconfirmed_elapsed_s += elapsed
+            if (
+                not absence_observed
+                and event.unconfirmed_elapsed_s
+                > self._cfg.occupancy.anchor_max_confirmation_gap_s
+            ):
+                # Protected gaps may retain an event, but cannot preserve stale
+                # alert credit. Ordinary absence clears through its own window.
+                event.last_confirmed_anchor_s = 0.0
             event.dwell_s = max(0.0, obs.time_s - event.started_at)
+            event.anchor_near_s = max(0.0, obs.time_s - event.anchor_set_at)
 
         clear_window = self._clear_window()
         self._events = [
@@ -200,7 +256,7 @@ class OccupancySupportEstimator:
         return max(
             self._events,
             key=lambda event: (
-                event.dwell_s >= self._cfg.thresholds.vehicle_alert_s,
+                event.last_confirmed_anchor_s >= self._cfg.thresholds.vehicle_alert_s,
                 event.occupancy_state is OccupancyState.OCCUPIED,
                 -event.observable_absence_s,
                 event.dwell_s,
