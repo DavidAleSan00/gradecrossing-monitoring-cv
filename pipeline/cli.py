@@ -208,7 +208,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--config", default=None,
                        help="path to a YAML config file (default: configs/default.yaml)")
     p_run.add_argument("--model", default=None,
-                       help="YOLO .pt file or NCNN model directory (overrides config model.path)")
+                       help="YOLO .pt/.onnx file or NCNN directory (overrides config model.path)")
     p_run.add_argument("--device", default=None,
                        help="inference device, e.g. cpu or mps (overrides config model.device)")
     p_run.add_argument("--output-dir", default="outputs")

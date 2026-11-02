@@ -196,6 +196,61 @@ continues to include decoding, perception, decisions, overlays and both output
 videos. Compare speed and review prediction differences together. MacBook
 results do not establish Raspberry Pi performance.
 
+## ONNX Runtime and three-minute comparisons
+
+The `onnx-runtime-comparison` branch also supports ONNX Runtime. Install and
+export once in the project virtual environment:
+
+```bash
+python -m pip install -e '.[onnx]'
+yolo export model=weights/yolo26n.pt format=onnx imgsz=384,640 half=False device=cpu end2end=False dynamic=False simplify=False opset=17
+```
+
+This creates `weights/yolo26n.onnx`. The static batch-one FP32 export uses the
+same one-to-many head and 384x640 input as the NCNN comparison. Graph slimming
+is disabled for reproducibility; ONNX Runtime's own graph optimizations are
+enabled. The adapter selects only `CPUExecutionProvider`, uses the PyTorch
+intra-operation thread count and one inter-operation thread, and preserves the
+fixed input dimensions on every frame. Summaries record these settings and
+the installed ONNX/ONNX Runtime versions. This CPU comparison does not measure
+CoreML or other accelerator providers.
+
+For a shorter workload, use the first three minutes of each recording. These
+sources are 30 FPS, so the following commands copy the first 5,400 video frames
+without re-encoding. FFmpeg must be installed. `-n` refuses to overwrite an
+existing clip. Audio is omitted because the pipeline uses only video.
+
+```bash
+mkdir -p data/videos/runtime-clips
+ffmpeg -hide_banner -loglevel error -n -i data/videos/Bicentennial_Street/DSCF0017.MP4 -map 0:v:0 -frames:v 5400 -c:v copy -an data/videos/runtime-clips/DSCF0017-first3min.mp4
+ffmpeg -hide_banner -loglevel error -n -i data/videos/10th_Street/DSCF0311.MP4 -map 0:v:0 -frames:v 5400 -c:v copy -an data/videos/runtime-clips/DSCF0311-first3min.mp4
+python -m pipeline list-videos --manifest data/manifests/runtime-clips.yaml
+```
+
+The separate manifest retains the original polygons and introduces distinct
+clip IDs. For these source files each copied clip decodes to 5,400 frames with
+approximately 180 seconds of video (container rounding reports 179.999 s).
+The default frame step analyzes 2,700 frames per clip. Each run starts with
+fresh tracker/background state. Events after three minutes are excluded, so
+these excerpts cannot establish full-recording alert quality.
+
+Run the same two clips with **all three runtimes** to collect a new comparison
+set. This loop executes six runs sequentially:
+
+```bash
+for video in DSCF0017-first3min DSCF0311-first3min; do
+  for runtime in pytorch-comparison ncnn onnx; do
+    python -m pipeline run --video "$video" --manifest data/manifests/runtime-clips.yaml --config "configs/$runtime.yaml" --output-dir "outputs/runtime-clips/$runtime" || break 2
+  done
+done
+```
+
+Keep full-recording results separate from this new clip comparison in Excel.
+Do not compare a three-minute ONNX run against a ten-minute PyTorch run as a
+controlled runtime test. One run per configuration is exploratory; repeat runs
+are needed to describe variation. Rotate runtime order on repeat trials to
+reduce order-related bias, and avoid other heavy workloads during timing.
+
 ## Run Outputs
 
 Each run writes one self-contained directory,

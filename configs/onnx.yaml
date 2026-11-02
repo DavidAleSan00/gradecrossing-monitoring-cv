@@ -1,0 +1,6 @@
+# Matched to pytorch-comparison.yaml and ncnn.yaml: CPU, FP32, one-to-many + NMS.
+# Export once using the command in README.md before running this configuration.
+model:
+  path: weights/yolo26n.onnx
+  device: cpu
+  end2end: false

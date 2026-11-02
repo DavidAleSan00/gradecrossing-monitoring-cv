@@ -1,4 +1,4 @@
-"""Configure the NCNN CPU comparison and record inference identity/timing."""
+"""Configure CPU runtime comparisons and record inference identity/timing."""
 
 from __future__ import annotations
 
@@ -53,12 +53,45 @@ class InferenceSession:
         self.inference_samples = 0
         self.backend_details: dict[str, Any] = {}
         self._ncnn_configured = False
+        self._onnx_configured = False
         metadata_path = Path(model_path) / "metadata.yaml"
         self.export_shape_hw = None
         if metadata_path.is_file():
             metadata = yaml.safe_load(metadata_path.read_text())
             self.export_shape_hw = metadata["imgsz"]
+        elif Path(model_path).suffix == ".onnx":
+            import onnx
+
+            graph = onnx.load(model_path, load_external_data=False)
+            dimensions = graph.graph.input[0].type.tensor_type.shape.dim
+            shape = [dimension.dim_value for dimension in dimensions]
+            if len(shape) != 4 or shape[0] != 1 or shape[1] != 3 or not all(shape):
+                raise ValueError("ONNX comparison requires a static batch-one NCHW export")
+            self.export_shape_hw = shape[2:]
         model.add_callback("on_predict_start", self._configure_ncnn_cpu)
+        model.add_callback("on_predict_start", self._configure_onnx_cpu)
+
+    def _configure_onnx_cpu(self, predictor) -> None:
+        """Create the CPU session before real inference with explicit threads.
+
+        The pinned adapter uses session.run on CPU (no IO binding). Replacing
+        its session here retains preprocessing, output names and postprocessing.
+        """
+        backend = predictor.model
+        if self._onnx_configured or backend.format != "onnx" or str(predictor.device) != "cpu":
+            return
+        import onnxruntime as ort
+        import torch
+
+        options = ort.SessionOptions()
+        options.intra_op_num_threads = torch.get_num_threads()
+        options.inter_op_num_threads = 1
+        options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        backend.backend.session = ort.InferenceSession(
+            self.model_path, sess_options=options, providers=["CPUExecutionProvider"],
+        )
+        self._onnx_configured = True
 
     def _configure_ncnn_cpu(self, predictor) -> None:
         """Use FP32 CPU arithmetic and the same thread count as PyTorch.
@@ -90,10 +123,10 @@ class InferenceSession:
         if self.export_shape_hw is not None:
             # Ultralytics reapplies kwargs on every track(frame) call. Passing
             # the scalar 640 again would override the fixed export dimensions
-            # after the first frame and feed the NCNN graph a wrong shape.
+            # after the first frame and feed a static export a wrong shape.
             requested = kwargs.get("imgsz")
             if requested not in (None, max(self.export_shape_hw)) and requested != self.export_shape_hw:
-                raise ValueError("NCNN input size differs from config; re-export for the requested size")
+                raise ValueError("Export input size differs from config; re-export for the requested size")
             kwargs["imgsz"] = self.export_shape_hw
         started = time.perf_counter()
         results = self.model.track(frame, **kwargs)
@@ -124,6 +157,15 @@ class InferenceSession:
                         "use_fp16_arithmetic", "use_bf16_storage", "use_vulkan_compute",
                     )
                 }
+            elif backend.format == "onnx":
+                options = backend.session.get_session_options()
+                self.backend_details["onnx_options"] = {
+                    "providers": backend.session.get_providers(),
+                    "intra_op_num_threads": options.intra_op_num_threads,
+                    "inter_op_num_threads": options.inter_op_num_threads,
+                    "execution_mode": str(options.execution_mode),
+                    "graph_optimization_level": str(options.graph_optimization_level),
+                }
         return results
 
     def snapshot(self) -> dict[str, Any]:
@@ -145,6 +187,7 @@ class InferenceSession:
             "torch_threads": torch.get_num_threads(),
             "host": {"system": platform.system(), "release": platform.release(), "machine": platform.machine()},
             "versions": {name: _version(name) for name in (
-                "torch", "ultralytics", "ncnn", "pnnx", "opencv-python", "numpy", "lap",
+                "torch", "ultralytics", "ncnn", "pnnx", "onnx", "onnxruntime",
+                "opencv-python", "numpy", "lap",
             )},
         }

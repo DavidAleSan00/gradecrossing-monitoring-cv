@@ -16,6 +16,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+onnx = [
+    "onnx==1.19.1",
+    "onnxruntime==1.19.2",
+]
 ncnn = [
     "ncnn==1.0.20261020",
     "pnnx==20261020",

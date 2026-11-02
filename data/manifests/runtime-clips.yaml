@@ -1,0 +1,9 @@
+# First 5,400 frames (~180 s at 30 FPS), copied without re-encoding.
+# Recreate with the FFmpeg commands in README.md; originals remain unchanged.
+videos:
+  - id: DSCF0017-first3min
+    path: data/videos/runtime-clips/DSCF0017-first3min.mp4
+    zoi: [[0, 264], [1278, 643], [1279, 517], [109, 245]]
+  - id: DSCF0311-first3min
+    path: data/videos/runtime-clips/DSCF0311-first3min.mp4
+    zoi: [[463, 717], [925, 215], [757, 228], [3, 644], [4, 719]]

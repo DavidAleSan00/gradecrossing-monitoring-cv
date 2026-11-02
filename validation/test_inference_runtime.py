@@ -107,3 +107,63 @@ def test_fixed_export_shape_is_preserved_on_every_frame(tmp_path):
     assert [call["imgsz"] for call in calls] == [[384, 640], [384, 640]]
     with pytest.raises(ValueError, match="re-export"):
         session.track(np.zeros((720, 1280, 3)), imgsz=320)
+
+
+def _write_identity_onnx(path, shape):
+    onnx = pytest.importorskip("onnx")
+    value = onnx.helper.make_tensor_value_info("images", onnx.TensorProto.FLOAT, shape)
+    output = onnx.helper.make_tensor_value_info("output0", onnx.TensorProto.FLOAT, shape)
+    graph = onnx.helper.make_graph(
+        [onnx.helper.make_node("Identity", ["images"], ["output0"])],
+        "identity", [value], [output],
+    )
+    model = onnx.helper.make_model(graph, opset_imports=[onnx.helper.make_opsetid("", 17)])
+    model.ir_version = 10
+    onnx.save(model, path)
+
+
+@pytest.mark.parametrize("shape", [[1, 3, "height", "width"], [2, 3, 32, 64]])
+def test_onnx_comparison_rejects_dynamic_or_batched_exports(tmp_path, shape):
+    path = tmp_path / "identity.onnx"
+    _write_identity_onnx(path, shape)
+    with pytest.raises(ValueError, match="static batch-one"):
+        InferenceSession(SimpleNamespace(), str(path))
+
+
+def test_onnx_cpu_session_preserves_data_and_static_shape_across_frames(tmp_path):
+    pytest.importorskip("onnxruntime")
+    import torch
+
+    path = tmp_path / "identity.onnx"
+    _write_identity_onnx(path, [1, 3, 32, 64])
+    callbacks = []
+    inner = SimpleNamespace(session=None)
+    backend = SimpleNamespace(format="onnx", backend=inner)
+    predictor = SimpleNamespace(model=backend, device="cpu")
+    seen = []
+
+    def track(frame, **kwargs):
+        for callback in callbacks:
+            callback(predictor)
+        seen.append((kwargs["imgsz"], inner.session))
+        data = np.arange(3 * 32 * 64, dtype=np.float32).reshape(1, 3, 32, 64)
+        np.testing.assert_array_equal(
+            inner.session.run(None, {"images": data})[0], data,
+        )
+        return [SimpleNamespace(speed={"inference": 1.0})]
+
+    model = SimpleNamespace(
+        add_callback=lambda name, callback: callbacks.append(callback), track=track,
+    )
+    session = InferenceSession(model, str(path))
+    session.backend_details = {"runtime": "onnx"}
+    for _ in range(2):
+        session.track(np.zeros((32, 64, 3)), imgsz=64)
+    assert [shape for shape, _ in seen] == [[32, 64], [32, 64]]
+    assert seen[0][1] is seen[1][1]
+    options = inner.session.get_session_options()
+    assert options.intra_op_num_threads == torch.get_num_threads()
+    assert options.inter_op_num_threads == 1
+    assert inner.session.get_providers() == ["CPUExecutionProvider"]
+    with pytest.raises(ValueError, match="re-export"):
+        session.track(np.zeros((32, 64, 3)), imgsz=128)
