@@ -107,6 +107,7 @@ def save_run_results(
     config_snapshot: dict[str, Any],
     video_path: str | None = None,
     configured_zoi: list | None = None,
+    inference_metadata: dict[str, Any] | None = None,
 ) -> None:
     """Publish the run artifacts, then write the completed summary last."""
     spools = result.telemetry_spools
@@ -143,6 +144,7 @@ def save_run_results(
             "duration_s": result.duration_s,
         },
         "configured_zoi": configured_zoi,
+        "inference": inference_metadata,
         "performance": {
             "alert_first_triggered_s": result.alert_first_triggered,
             "status_counts": dict(result.status_counts),

@@ -1,0 +1,6 @@
+# Matched baseline: the pinned NCNN exporter uses the one-to-many/NMS head.
+# The original default end-to-end runs remain historical reference results.
+model:
+  path: weights/yolo26n.pt
+  device: cpu
+  end2end: false

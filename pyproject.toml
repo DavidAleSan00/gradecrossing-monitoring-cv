@@ -16,6 +16,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+ncnn = [
+    "ncnn==1.0.20261020",
+    "pnnx==20261020",
+]
 dev = [
     "jupyter",
     "ipykernel",
@@ -32,7 +36,7 @@ include = ["pipeline*"]
 "pipeline.perception.tracking" = ["botsort.yaml"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "validation"]
 markers = [
     "integration: requires real video clips and model weights; use --require-integration-assets for release audits",
 ]

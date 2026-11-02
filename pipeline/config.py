@@ -16,6 +16,8 @@ DEFAULT_CONFIG_PATH = PROJECT_ROOT / "configs/default.yaml"
 @dataclass
 class ModelConfig:
     path: str = "weights/yolo26n.pt"
+    device: str | None = None
+    end2end: bool | None = None
     conf: float = 0.25
     train_conf: float = 0.05
     imgsz: int = 640
@@ -142,6 +144,12 @@ def validate_config(cfg: PipelineConfig) -> PipelineConfig:
     model = cfg.model
     if not isinstance(model.path, str) or not model.path.strip():
         raise ValueError("Config value 'model.path' must be a non-empty string")
+    if model.device is not None and (
+        not isinstance(model.device, str) or not model.device.strip()
+    ):
+        raise ValueError("Config value 'model.device' must be null or a non-empty string")
+    if model.end2end is not None and not isinstance(model.end2end, bool):
+        raise ValueError("Config value 'model.end2end' must be null or boolean")
     if not isinstance(model.vehicle_classes, list) or not model.vehicle_classes:
         raise ValueError("Config value 'model.vehicle_classes' must be a non-empty list")
     if any(isinstance(value, bool) or not isinstance(value, int) for value in model.vehicle_classes):

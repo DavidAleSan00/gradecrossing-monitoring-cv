@@ -1,0 +1,6 @@
+# Same perception/decision defaults, with the exported CPU detector selected.
+# Export at 384x640 for the 1280x720 Bicentennial and 10th Street comparison.
+model:
+  path: weights/yolo26n_ncnn_model
+  device: cpu
+  end2end: false  # Required by Ultralytics 8.4.78 NCNN export

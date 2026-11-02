@@ -8,6 +8,8 @@
 
 # model:
 #   path: weights/yolo26n.pt
+#   device: null  # Ultralytics default; use cpu for a controlled CPU comparison
+#   end2end: null  # Model default; false for BOTH sides of the NCNN comparison
 #   conf: 0.25
 #   train_conf: 0.05
 #   imgsz: 640

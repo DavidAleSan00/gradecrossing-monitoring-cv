@@ -134,6 +134,68 @@ results; skipped frames do not reuse old detections. Override `frame_step` when 
 deployment needs a different processing rate. The annotated video uses the
 reduced frame rate while retaining the source duration.
 
+## NCNN runtime comparison
+
+The `ncnn-runtime-comparison` branch can run the existing YOLO26n detector with
+NCNN. Install its optional dependencies in the project virtual environment:
+
+```bash
+python -m pip install -e '.[ncnn]'
+```
+
+Export the existing weights once, using FP32 weights and the same actual input
+shape that PyTorch uses for the 1280x720 Bicentennial and 10th Street videos:
+
+```bash
+yolo export model=weights/yolo26n.pt format=ncnn imgsz=384,640 half=False device=cpu
+```
+
+The exported directory is `weights/yolo26n_ncnn_model/`. The original `.pt`
+weights stay available. For these two videos, PyTorch's rectangular padding
+produces a 384x640 tensor even though the configured maximum image size is 640.
+A square 640x640 export would change the detector workload. Other camera aspect
+ratios or image-size settings need their own matching export.
+The inference adapter reapplies the export's fixed dimensions on every frame;
+otherwise repeated `track(frame)` calls can revert to square padding after the
+first frame in the pinned Ultralytics version.
+
+**The original two baseline runs are not a runtime-only control.** Ultralytics
+8.4.78 disables YOLO26's end-to-end (one-to-one) head during NCNN export because
+the required TopK operation is unsupported. The export uses the one-to-many
+head with NMS. Both comparison configurations therefore set `end2end: false`.
+Retain the original workbook results as historical reference and collect fresh
+PyTorch runs using `configs/pytorch-comparison.yaml` for the NCNN comparison.
+Do not attribute differences between original end-to-end predictions and NCNN
+predictions solely to the runtime.
+
+Run the NCNN comparison on the same machine used for the PyTorch baseline:
+
+```bash
+python -m pipeline run --video DSCF0017 --config configs/ncnn.yaml --output-dir outputs/ncnn
+python -m pipeline run --video DSCF0311 --config configs/ncnn.yaml --output-dir outputs/ncnn
+```
+
+For fresh controlled PyTorch CPU runs, use the same code and defaults:
+
+```bash
+python -m pipeline run --video DSCF0017 --config configs/pytorch-comparison.yaml --output-dir outputs/pytorch
+python -m pipeline run --video DSCF0311 --config configs/pytorch-comparison.yaml --output-dir outputs/pytorch
+```
+
+The NCNN CPU adapter explicitly disables native FP16/BF16 operations and uses
+the PyTorch CPU thread count before loading the exported weights. This is a
+controlled FP32 comparison, not a measurement of NCNN's default FP16 mode.
+Detection thresholds, frame selection, BoT-SORT, stabilization, background
+processing and temporal decisions use the same configuration in both runs.
+
+New `summary.json` files include an `inference` section with the actual backend,
+device, detection-head mode, input shape, precision options, thread counts, package versions, model
+hashes, and average inference time reported by Ultralytics. The separate track
+wall time includes tracking and first-call backend setup/warm-up. Pipeline FPS
+continues to include decoding, perception, decisions, overlays and both output
+videos. Compare speed and review prediction differences together. MacBook
+results do not establish Raspberry Pi performance.
+
 ## Run Outputs
 
 Each run writes one self-contained directory,
