@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 
 from ..config import PipelineConfig
+from ..timing import StageTimer, stage_scope, synchronize_if_cuda
 from .contracts import DetectionRecord
 from ..temporal.state import FrameObservations, build_observations
 from . import background
@@ -81,29 +82,38 @@ class PerceptionFront:
         *,
         time_s: float,
         frame_interval_s: float,
+        stage_timer: StageTimer | None = None,
     ) -> FramePerception:
         """Run all perception for one frame and return typed observations."""
         cfg = self._cfg
 
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        is_reference_frame = self._first_gray is None
-        if is_reference_frame:
-            self._first_gray = gray
-            self._first_points = detect_feature_points(gray, cfg.optical_flow)
-            # Invariant: the first frame defines reference coordinates even if
-            # it lacks enough features for later registration.
-            transform, registration_failed = np.eye(3, dtype=np.float64), False
-        else:
-            transform, registration_failed = estimate_frame_transform(
-                gray, self._first_gray, self._first_points, cfg.optical_flow,
-            )
-        zoi_stable = transform_points(self._zoi_points, transform)
-        zoi_mask_full = build_zoi_mask(frame.shape, zoi_stable)
-        registered_frame = register_to_reference(frame, transform)
+        with stage_scope(stage_timer, "stabilization"):
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            is_reference_frame = self._first_gray is None
+            if is_reference_frame:
+                self._first_gray = gray
+                self._first_points = detect_feature_points(gray, cfg.optical_flow)
+                # Invariant: the first frame defines reference coordinates even if
+                # it lacks enough features for later registration.
+                transform, registration_failed = np.eye(3, dtype=np.float64), False
+            else:
+                transform, registration_failed = estimate_frame_transform(
+                    gray, self._first_gray, self._first_points, cfg.optical_flow,
+                )
+            zoi_stable = transform_points(self._zoi_points, transform)
+            zoi_mask_full = build_zoi_mask(frame.shape, zoi_stable)
+            registered_frame = register_to_reference(frame, transform)
 
-        tracked = _track_with_context(
-            self._model, frame, zoi_mask_full, cfg.model, cfg.zoi,
-        )
+        with stage_scope(stage_timer, "detection"):
+            tracked = _track_with_context(
+                self._model, frame, zoi_mask_full, cfg.model, cfg.zoi,
+            )
+            if stage_timer is not None:
+                # Detection may run on an async CUDA backend (e.g. TensorRT);
+                # synchronize so this stage's measured time reflects actual
+                # GPU completion, not just kernel-launch/enqueue time. Only
+                # done when timing is explicitly enabled (see pipeline/timing.py).
+                synchronize_if_cuda(getattr(self._model, "device", None))
         train_raw_in_zoi = any(
             det.class_id == cfg.model.train_class
             and zoi_occupancy_ratio(det.bbox, zoi_mask_full) > 0.0
@@ -160,11 +170,12 @@ class PerceptionFront:
                 exclusion_reference, self._train_exclusion_reference,
             )
 
-        bg_result = background.detect(
-            registered_frame, self._reference_zoi_mask, exclusion_reference,
-            self._bg_model,
-            observation_valid=not registration_failed,
-        )
+        with stage_scope(stage_timer, "background"):
+            bg_result = background.detect(
+                registered_frame, self._reference_zoi_mask, exclusion_reference,
+                self._bg_model,
+                observation_valid=not registration_failed,
+            )
 
         observations = build_observations(
             time_s=time_s,

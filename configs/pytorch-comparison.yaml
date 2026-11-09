@@ -1,0 +1,12 @@
+# Matched baseline for the TensorRT comparison on the Jetson Orin Nano.
+#
+# Runs the original .pt weights explicitly on the GPU (device "0") rather than
+# relying on Ultralytics' automatic device selection. This isolates the
+# inference runtime/engine as the only variable between this run and
+# configs/tensorrt.yaml: same device, same model, same pipeline settings.
+# end2end is pinned to false so it matches configs/tensorrt.yaml even if that
+# TensorRT export turns out to need the one-to-many/NMS head (see README.md).
+model:
+  path: weights/yolo26n.pt
+  device: "0"
+  end2end: false

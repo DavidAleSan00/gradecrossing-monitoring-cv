@@ -141,19 +141,26 @@ def _cmd_run(args: argparse.Namespace) -> int:
     overrides = {}
     if args.model:
         overrides["model"] = {"path": args.model}
+    if args.device is not None:
+        overrides.setdefault("model", {})["device"] = args.device
+    if args.timing:
+        overrides.setdefault("timing", {})["enabled"] = True
     cfg = load_config(args.config, overrides=overrides or None)
 
     print(f"\nPreparing: {entry.id}", flush=True)
     from ultralytics import YOLO  # Performance: avoid the slow import for other commands.
     from .controller import run_pipeline
+    from .inference import InferenceSession
 
-    model = YOLO(cfg.model.path)
+    session = InferenceSession(
+        YOLO(cfg.model.path, task="detect"), cfg.model.path, device=cfg.model.device,
+    )
     run_paths = create_run(entry.id, base_dir=args.output_dir)
     print("Processing:", flush=True)
     try:
         result = run_pipeline(
             video_path=str(video_path),
-            model=model,
+            model=session,
             zoi_points=np.array(entry.zoi, dtype=np.int32),
             cfg=cfg,
             run_paths=run_paths,
@@ -168,6 +175,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         config_snapshot=cfg.snapshot(),
         video_path=str(video_path),
         configured_zoi=entry.zoi,
+        inference_metadata=session.snapshot(),
     )
 
     n = result.total_frames
@@ -204,7 +212,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--config", default=None,
                        help="path to a YAML config file (default: configs/default.yaml)")
     p_run.add_argument("--model", default=None,
-                       help="YOLO weights path (overrides config model.path)")
+                       help="YOLO .pt weights or TensorRT .engine path (overrides config model.path)")
+    p_run.add_argument("--device", default=None,
+                       help="inference device, e.g. cpu, mps, or a CUDA index like '0' "
+                            "(overrides config model.device)")
+    p_run.add_argument("--timing", action="store_true",
+                       help="record optional per-stage timing (detection/stabilization/"
+                            "background/output) in summary.json; adds GPU sync overhead "
+                            "on CUDA backends (see pipeline/timing.py)")
     p_run.add_argument("--output-dir", default="outputs")
     p_run.set_defaults(func=_cmd_run)
 

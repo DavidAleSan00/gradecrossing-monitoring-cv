@@ -107,6 +107,7 @@ def save_run_results(
     config_snapshot: dict[str, Any],
     video_path: str | None = None,
     configured_zoi: list | None = None,
+    inference_metadata: dict[str, Any] | None = None,
 ) -> None:
     """Publish the run artifacts, then write the completed summary last."""
     spools = result.telemetry_spools
@@ -143,14 +144,29 @@ def save_run_results(
             "duration_s": result.duration_s,
         },
         "configured_zoi": configured_zoi,
+        "inference": inference_metadata,
         "performance": {
             "alert_first_triggered_s": result.alert_first_triggered,
             "status_counts": dict(result.status_counts),
             "train_context_counts": dict(result.train_context_counts),
             "registration_failure_frames": result.registration_failure_frames,
             "processing_elapsed_s": elapsed,
+            # Three distinct rates, easy to conflate:
+            #  - analyzed_frame_fps: frames actually run through perception
+            #    (every frame_step'th source frame) per second of wall-clock
+            #    processing time. This is what to compare across runtimes.
+            #  - source_frame_throughput_fps: source frames decoded (including
+            #    skipped ones) per second of wall-clock processing time.
+            #  - video.fps / video.processed_fps: the *video's own* playback
+            #    rate (source) and the annotated/background output video's
+            #    encoded rate (source fps / frame_step) — not a measured speed.
             "processing_fps": result.total_frames / elapsed if elapsed > 0 else 0.0,
+            "analyzed_frame_fps": result.total_frames / elapsed if elapsed > 0 else 0.0,
+            "source_frame_throughput_fps": (
+                (result.source_total_frames or result.total_frames) / elapsed if elapsed > 0 else 0.0
+            ),
             "realtime_factor": result.duration_s / elapsed if elapsed > 0 else 0.0,
+            "stage_timings": result.stage_timings,
             **result.detection_stats.as_metrics(),
         },
         "predictions": {

@@ -1,0 +1,7 @@
+# TensorRT comparison, matched to configs/pytorch-comparison.yaml: GPU, FP32.
+# Build weights/yolo26n.engine on the Jetson first (see README.md:
+# "TensorRT runtime comparison" for the export command). Not executed here.
+model:
+  path: weights/yolo26n.engine
+  device: "0"
+  end2end: false  # Matches the PyTorch baseline; revisit if your export needs end2end=true

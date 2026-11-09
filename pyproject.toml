@@ -32,7 +32,7 @@ include = ["pipeline*"]
 "pipeline.perception.tracking" = ["botsort.yaml"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "validation"]
 markers = [
     "integration: requires real video clips and model weights; use --require-integration-assets for release audits",
 ]

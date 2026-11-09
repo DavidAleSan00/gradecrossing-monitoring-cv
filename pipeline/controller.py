@@ -24,6 +24,7 @@ from .output import RunPaths
 from .perception.front import FramePerception, PerceptionFront
 from .temporal.state import CrossingState, CrossingStateMachine, ObservationValidity
 from .overlay import draw_background_frame, draw_frame
+from .timing import StageTimer, stage_scope
 
 _ANNOTATED_VIDEO_CODECS = ("avc1", "mp4v")
 
@@ -86,6 +87,7 @@ class PipelineResult:
     source_fps: float | None = None
     telemetry_spools: TelemetrySpools | None = None
     processing_elapsed_s: float = 0.0
+    stage_timings: dict | None = None
 
     @property
     def alert_first_triggered(self) -> float | None:
@@ -152,6 +154,7 @@ def run_pipeline(
     status_counts: Counter = Counter()
     train_context_counts: Counter = Counter()
     registration_failure_frames = 0
+    stage_timer = StageTimer() if cfg.timing.enabled else None
     try:
         telemetry = TelemetrySink(
             run_paths.debug_timeline_csv if run_paths is not None else None,
@@ -198,6 +201,7 @@ def run_pipeline(
                 frame_interval_s=max(
                     current_time - frame_start_time, 1.0 / output_fps,
                 ),
+                stage_timer=stage_timer,
             )
             if (
                 sense.observations.registration_validity
@@ -236,29 +240,30 @@ def run_pipeline(
             telemetry.write_frame(record)
 
             if annotated_writer is not None:
-                frame_drawn = draw_frame(
-                    frame, sense.zoi_stable, sense.detections,
-                    state.status, sense.reference_to_current,
-                    occupancy_events=state.occupancy_events,
-                    debris_hypotheses=state.debris_hypotheses,
-                    registration_valid=(
-                        sense.observations.registration_validity
-                        is ObservationValidity.VALID
-                    ),
-                    vehicle_alert_s=cfg.thresholds.vehicle_alert_s,
-                    clear_confirmation_s=cfg.occupancy.clear_confirmation_s,
-                    train_context=train_context,
-                )
-                annotated_writer.write(frame_drawn)
-                background_writer.write(draw_background_frame(
-                    sense.background_frame,
-                    zoi_points,
-                    sense.debris_mask,
-                    state.debris_hypotheses,
-                    state.debris_persistence_s,
-                    sense.observations.background_ready,
-                    train_context,
-                ))
+                with stage_scope(stage_timer, "video_output"):
+                    frame_drawn = draw_frame(
+                        frame, sense.zoi_stable, sense.detections,
+                        state.status, sense.reference_to_current,
+                        occupancy_events=state.occupancy_events,
+                        debris_hypotheses=state.debris_hypotheses,
+                        registration_valid=(
+                            sense.observations.registration_validity
+                            is ObservationValidity.VALID
+                        ),
+                        vehicle_alert_s=cfg.thresholds.vehicle_alert_s,
+                        clear_confirmation_s=cfg.occupancy.clear_confirmation_s,
+                        train_context=train_context,
+                    )
+                    annotated_writer.write(frame_drawn)
+                    background_writer.write(draw_background_frame(
+                        sense.background_frame,
+                        zoi_points,
+                        sense.debris_mask,
+                        state.debris_hypotheses,
+                        state.debris_persistence_s,
+                        sense.observations.background_ready,
+                        train_context,
+                    ))
             report_progress(source_frame_count)
         loop_completed = True
     finally:
@@ -302,6 +307,7 @@ def run_pipeline(
         source_fps=fps,
         telemetry_spools=telemetry_spools,
         processing_elapsed_s=processing_elapsed_s,
+        stage_timings=stage_timer.snapshot() if stage_timer is not None else None,
     )
 
 

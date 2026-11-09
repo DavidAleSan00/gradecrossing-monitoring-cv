@@ -16,6 +16,8 @@ DEFAULT_CONFIG_PATH = PROJECT_ROOT / "configs/default.yaml"
 @dataclass
 class ModelConfig:
     path: str = "weights/yolo26n.pt"
+    device: str | None = None
+    end2end: bool | None = None
     conf: float = 0.25
     train_conf: float = 0.05
     imgsz: int = 640
@@ -78,6 +80,15 @@ class ThresholdsConfig:
 
 
 @dataclass
+class TimingConfig:
+    # Optional per-stage wall-clock timing (detection/stabilization/background/
+    # output) for bottleneck analysis. Off by default: ordinary runs pay no
+    # timing overhead and perform no extra GPU synchronization. See
+    # pipeline/timing.py for what enabling this changes.
+    enabled: bool = False
+
+
+@dataclass
 class PipelineConfig:
     frame_step: int = 2
     model: ModelConfig = field(default_factory=ModelConfig)
@@ -86,6 +97,7 @@ class PipelineConfig:
     zoi: ZoiConfig = field(default_factory=ZoiConfig)
     occupancy: OccupancyConfig = field(default_factory=OccupancyConfig)
     thresholds: ThresholdsConfig = field(default_factory=ThresholdsConfig)
+    timing: TimingConfig = field(default_factory=TimingConfig)
 
     def snapshot(self) -> dict[str, Any]:
         """Exact resolved values for config_used.yaml."""
@@ -142,6 +154,12 @@ def validate_config(cfg: PipelineConfig) -> PipelineConfig:
     model = cfg.model
     if not isinstance(model.path, str) or not model.path.strip():
         raise ValueError("Config value 'model.path' must be a non-empty string")
+    if model.device is not None and (
+        not isinstance(model.device, str) or not model.device.strip()
+    ):
+        raise ValueError("Config value 'model.device' must be null or a non-empty string")
+    if model.end2end is not None and not isinstance(model.end2end, bool):
+        raise ValueError("Config value 'model.end2end' must be null or boolean")
     if not isinstance(model.vehicle_classes, list) or not model.vehicle_classes:
         raise ValueError("Config value 'model.vehicle_classes' must be a non-empty list")
     if any(isinstance(value, bool) or not isinstance(value, int) for value in model.vehicle_classes):
@@ -203,6 +221,8 @@ def validate_config(cfg: PipelineConfig) -> PipelineConfig:
 
     if not isinstance(cfg.background.detect_shadows, bool):
         raise TypeError("background.detect_shadows must be boolean")
+    if not isinstance(cfg.timing.enabled, bool):
+        raise TypeError("timing.enabled must be boolean")
     return cfg
 
 

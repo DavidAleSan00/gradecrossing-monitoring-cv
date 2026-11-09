@@ -8,6 +8,8 @@
 
 # model:
 #   path: weights/yolo26n.pt
+#   device: null  # Ultralytics default; e.g. cpu, mps, or a CUDA index like "0"
+#   end2end: null  # Model default; see configs/tensorrt.yaml for the TensorRT comparison
 #   conf: 0.25
 #   train_conf: 0.05
 #   imgsz: 640
@@ -49,3 +51,6 @@
 #   vehicle_alert_s: 3.0
 #   debris_alert_s: 2.0
 #   debris_clear_confirmation_s: 0.5
+
+# timing:
+#   enabled: false  # Optional per-stage timing; see pipeline/timing.py for overhead notes

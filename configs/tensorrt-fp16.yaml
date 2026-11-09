@@ -1,0 +1,11 @@
+# A SEPARATE precision comparison, not matched against any PyTorch baseline.
+# FP16 changes numerical precision as well as runtime, so don't compare this
+# against configs/pytorch-comparison.yaml (FP32) and attribute the difference
+# to TensorRT alone. Compare it against configs/tensorrt.yaml (FP32 TensorRT)
+# to isolate precision, and against configs/pytorch-comparison.yaml only to
+# characterize the full PyTorch-FP32 -> TensorRT-FP16 deployment change.
+# Build weights/yolo26n_fp16.engine on the Jetson first (half=True at export).
+model:
+  path: weights/yolo26n_fp16.engine
+  device: "0"
+  end2end: false

@@ -15,6 +15,9 @@ _BOTSORT_CONFIG = Path(__file__).with_name("botsort.yaml")
 
 def run_tracking(model, frame: np.ndarray, cfg: ModelConfig):
     """Run one detector sample and return its Ultralytics result."""
+    device_args = {"device": cfg.device} if cfg.device is not None else {}
+    if cfg.end2end is not None:
+        device_args["end2end"] = cfg.end2end
     return model.track(
         frame,
         persist=True,
@@ -23,6 +26,7 @@ def run_tracking(model, frame: np.ndarray, cfg: ModelConfig):
         conf=min(cfg.conf, cfg.train_conf),
         classes=cfg.classes,
         imgsz=cfg.imgsz,
+        **device_args,
     )[0]
 
 
