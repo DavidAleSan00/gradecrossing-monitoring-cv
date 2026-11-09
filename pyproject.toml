@@ -7,14 +7,17 @@ name = "usdot-gradecrossing-monitoring"
 version = "0.4.0"
 description = "Grade-crossing hazard monitoring with computer vision (YOLO + BoT-SORT + MOG2)"
 requires-python = ">=3.9"
-# These numpy/opencv pins are for Mac/Raspberry Pi. The NVIDIA Jetson Orin
-# Nano target needs older numpy/opencv builds to match its JetPack-provided
-# PyTorch; see requirements-jetson.txt and README.md ("TensorRT runtime
-# comparison") instead of installing this project's declared dependencies
-# unmodified on a Jetson.
+# numpy/opencv are ranges, not exact pins, because the supported platforms
+# need different exact versions: numpy==2.0.2 / opencv-python==4.13.0.92 on
+# Mac/Raspberry Pi, numpy==1.26.4 / opencv-python==4.11.0.86 on the NVIDIA
+# Jetson Orin Nano (to match its JetPack-provided PyTorch — see
+# constraints-jetson.txt and README.md "TensorRT runtime comparison"). Pin
+# the exact version actually installed with `-c constraints-mac-pi.txt` or
+# `-c constraints-jetson.txt` so the range below doesn't just resolve to
+# "whatever's newest" — see those files and README.md "Quick Start".
 dependencies = [
-    "opencv-python==4.13.0.92",
-    "numpy==2.0.2",
+    "opencv-python>=4.11.0.86,<4.14",
+    "numpy>=1.26.4,<2.1",
     "ultralytics==8.4.78",
     "lap==0.5.13",
     "pyyaml==6.0.3",

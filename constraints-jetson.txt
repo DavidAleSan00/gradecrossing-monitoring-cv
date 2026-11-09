@@ -1,0 +1,13 @@
+# Exact numpy/opencv versions tested on the NVIDIA Jetson Orin Nano (JetPack
+# 6.2.1 / Jetson Linux 36.4.4, CUDA 12.6), matching its JetPack-provided
+# PyTorch 2.8.0 / Torchvision 0.23.0. pyproject.toml declares a range
+# covering both this and constraints-mac-pi.txt; this file pins the specific
+# versions actually tested here.
+#
+# ultralytics/lap/pyyaml are not platform-varying and stay exactly pinned in
+# pyproject.toml on every platform, so they aren't repeated here. PyTorch/
+# Torchvision also aren't: install NVIDIA's own Jetson wheels for your
+# JetPack release first (not plain PyPI) — see README.md "TensorRT runtime
+# comparison".
+numpy==1.26.4
+opencv-python==4.11.0.86

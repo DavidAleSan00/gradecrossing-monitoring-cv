@@ -111,8 +111,13 @@ source .venv/bin/activate   # macOS/Linux
 
 ```bash
 pip install --upgrade pip setuptools
-pip install -e .
+pip install -e . -c constraints-mac-pi.txt
 ```
+
+`-c constraints-mac-pi.txt` pins numpy/opencv to the exact versions tested on
+Mac/Raspberry Pi; `pyproject.toml` itself declares a wider range so its
+declared dependencies stay accurate on every supported platform, Jetson
+included — see "TensorRT runtime comparison" below for the Jetson install.
 
 ## Running the Pipeline
 
@@ -139,7 +144,10 @@ reduced frame rate while retaining the source duration.
 The `tensorrt-runtime-comparison` branch adds explicit TensorRT support for
 the target deployment device, an NVIDIA Jetson Orin Nano (8 GB, JetPack
 6.2.1 / Jetson Linux 36.4.4). It is additive: PyTorch `.pt` weights still run
-exactly as before, on any platform, with no new required dependencies.
+exactly as before, on any platform, with no new required dependencies —
+numpy/opencv become ranges instead of exact pins (see below), but Mac/Pi
+installs still resolve to the exact same previously-tested versions when
+using the new constraints file.
 
 **Status: implemented but not yet tested.** It has not been run on the
 Jetson, exported, or benchmarked. See the assumptions and open questions
@@ -147,33 +155,40 @@ below before relying on it.
 
 ### Why the Jetson needs different NumPy/OpenCV versions
 
-`pyproject.toml`'s pinned `numpy==2.0.2` and `opencv-python==4.13.0.92` are
-unchanged on this branch — they stay correct for Mac and Raspberry Pi. The
-tested Jetson combination instead is `numpy==1.26.4`, `opencv-python==
-4.11.0.86`, `torch==2.8.0`, and `torchvision==0.23.0` (JetPack 6.2.1, CUDA
-12.6) — these are **not** installed automatically by the Jetson PyTorch
-wheel; they must be installed explicitly. Rather than adding platform
-markers (Jetson and Raspberry Pi are both `aarch64`, so `platform_machine`
-can't tell them apart) or leaving `pyproject.toml`'s declared dependencies
-silently wrong for the Jetson, [requirements-jetson.txt](requirements-jetson.txt)
-is a second, explicit, version-controlled declaration for this exact
-combination:
+The tested Jetson combination is `numpy==1.26.4`, `opencv-python==4.11.0.86`,
+`torch==2.8.0`, and `torchvision==0.23.0` (JetPack 6.2.1, CUDA 12.6) —
+**not** the `numpy==2.0.2` / `opencv-python==4.13.0.92` tested on Mac/
+Raspberry Pi, and **not** installed automatically by the Jetson PyTorch
+wheel; numpy/opencv must be installed explicitly to match it.
+
+`pyproject.toml` declares `numpy`/`opencv-python` as *ranges* wide enough to
+cover both tested combinations (`numpy>=1.26.4,<2.1`, `opencv-python>=
+4.11.0.86,<4.14`), rather than exact pins — so whichever exact version is
+actually installed, on either platform, genuinely satisfies what the package
+declares; there's no separate, silently-wrong exact pin left behind. Platform
+markers aren't used to pick between the two (Jetson and Raspberry Pi are both
+`aarch64`, so `platform_machine` can't tell them apart). The exact,
+version-controlled pin for each platform instead lives in its own
+[pip constraints file](https://pip.pypa.io/en/stable/user_guide/#constraints-files):
+[constraints-mac-pi.txt](constraints-mac-pi.txt) and
+[constraints-jetson.txt](constraints-jetson.txt).
 
 ```bash
 # 1. Install NVIDIA's own Jetson wheels for PyTorch 2.8.0 / Torchvision 0.23.0
 #    (JetPack 6.2.1 / Jetson Linux 36.4.4) per NVIDIA's instructions for your
 #    JetPack release — these do not come from plain PyPI.
-# 2. Install this package's code without pyproject.toml's Mac/Pi numpy/opencv
-#    pins, then install the Jetson-tested versions instead:
+# 2. --no-deps avoids a full dependency resolve replacing that Jetson-specific
+#    PyTorch/Torchvision build with a generic one; install numpy/opencv
+#    pinned to the tested Jetson versions separately instead:
 python -m pip install -e . --no-deps
-python -m pip install -r requirements-jetson.txt
+python -m pip install -r constraints-jetson.txt
 # 3. Confirm the versions actually resolved (also recorded automatically in
 #    summary.json "inference.versions" for every run — see below):
 python -c "import numpy, cv2, torch, torchvision; print(numpy.__version__, cv2.__version__, torch.__version__, torchvision.__version__)"
 ```
 
 TensorRT itself (10.3.0) and its Python bindings are provided by JetPack as a
-system package, not a pip package — it is not in `requirements-jetson.txt`.
+system package, not a pip package — it is not in `constraints-jetson.txt`.
 
 ### Runtime selection
 
@@ -257,10 +272,19 @@ mv weights/yolo26n.engine weights/yolo26n_fp16.engine  # avoid overwriting the F
 ```
 
 `imgsz`, `batch`, `device`, `half`, and `end2end` are all explicit on the
-command line rather than left to tool/model defaults, and must match
-`configs/tensorrt.yaml` / `configs/tensorrt-fp16.yaml` exactly —
-`InferenceSession` enforces this at load time rather than merely recording a
-mismatch afterward.
+command line rather than left to tool/model defaults. Of these,
+`InferenceSession` actually **enforces** a match against the corresponding
+config at load time, before any frame runs: `end2end` (detection head) and
+`imgsz`/`batch` (input shape). **It does not enforce `half`/precision** —
+there is no `model.precision` config field, and FP32 vs. FP16 is selected
+purely by which `.engine` file `model.path` points at
+(`configs/tensorrt.yaml` vs. `configs/tensorrt-fp16.yaml`). It only *records*
+the actual precision it finds (`backend.fp16`, in `summary.json`'s
+`inference.input_dtype`) after the engine loads — so a `yolo26n.engine` built
+with `half=True` by mistake would still load as FP16 under
+`configs/tensorrt.yaml`'s nominally-FP32 label; check `input_dtype` in the
+run's own `summary.json` to confirm which precision actually ran, don't
+assume it from the config/filename.
 
 ### Matched comparison runs
 
@@ -338,6 +362,19 @@ duration divided by processing time, as before.
   pipeline always tracks a single frame per call, so only `batch=1` static or
   dynamic engines are supported, and DLA/INT8 export flags aren't threaded
   through.
+- **Precision (FP32/FP16) is not enforced**, only recorded after load (see
+  "Runtime selection" above) — `InferenceSession` validates `end2end` and
+  `imgsz`/`batch` up front, but there's no config field to cross-check `half`
+  against, so a wrongly-exported engine's actual precision would only be
+  visible by reading `summary.json`'s `inference.input_dtype`, not caught
+  before the run.
+- **The `numpy`/`opencv-python` ranges in `pyproject.toml`** (`numpy>=
+  1.26.4,<2.1`, `opencv-python>=4.11.0.86,<4.14`) are bounded just above the
+  two tested exact versions (2.0.2 and 1.26.4 for numpy; 4.13.0.92 and
+  4.11.0.86 for opencv), not independently verified across the whole range —
+  always install with `-c constraints-mac-pi.txt` or `-c
+  constraints-jetson.txt` rather than relying on the range alone to land on
+  a tested version.
 - **None of this has been executed.** No export, install, benchmark, or
   Jetson/remote-device command has been run; everything above is derived from
   reading the installed Ultralytics 8.4.78 source and this pipeline's code,

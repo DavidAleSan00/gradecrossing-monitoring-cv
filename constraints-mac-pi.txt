@@ -1,0 +1,7 @@
+# Exact numpy/opencv versions tested on Mac and Raspberry Pi. pyproject.toml
+# declares a range covering both this and constraints-jetson.txt; pass this
+# file with `pip install -e . -c constraints-mac-pi.txt` to pin the specific
+# versions actually tested here, instead of letting pip resolve to whatever
+# satisfies the range is newest.
+numpy==2.0.2
+opencv-python==4.13.0.92
