@@ -104,7 +104,11 @@ class PerceptionFront:
             zoi_mask_full = build_zoi_mask(frame.shape, zoi_stable)
             registered_frame = register_to_reference(frame, transform)
 
-        with stage_scope(stage_timer, "detection"):
+        # "detection_tracking" covers YOLO inference, BoT-SORT association,
+        # and the ZOI/train spatial-context pass done right after — not
+        # YOLO-only inference time. See pipeline/timing.py for the full
+        # per-stage breakdown and what isn't measured at all.
+        with stage_scope(stage_timer, "detection_tracking"):
             tracked = _track_with_context(
                 self._model, frame, zoi_mask_full, cfg.model, cfg.zoi,
             )

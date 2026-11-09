@@ -86,7 +86,14 @@ class InferenceSession:
     pipeline/output.py for the frame-rate breakdown recorded per run.
     """
 
-    def __init__(self, model: Any, model_path: str, device: str | None = None) -> None:
+    def __init__(
+        self,
+        model: Any,
+        model_path: str,
+        device: str | None = None,
+        end2end: bool | None = None,
+        imgsz: int | list[int] | None = None,
+    ) -> None:
         self.model = model
         self.model_path = model_path
         self.model_sha256 = _hash_file(Path(model_path))
@@ -99,12 +106,29 @@ class InferenceSession:
         self.engine_metadata: dict[str, Any] | None = None
 
         if Path(model_path).suffix == ".engine":
-            self._validate_engine(Path(model_path), device)
+            self._validate_engine(Path(model_path), device, end2end, imgsz)
 
-    def _validate_engine(self, path: Path, requested_device: str | None) -> None:
+    def _validate_engine(
+        self,
+        path: Path,
+        requested_device: str | None,
+        requested_end2end: bool | None,
+        requested_imgsz: int | list[int] | None,
+    ) -> None:
         """Fail clearly on incompatible TensorRT configurations up front,
         instead of letting Ultralytics silently reassign the device or hit a
-        confusing low-level CUDA/TensorRT error on the first frame."""
+        confusing low-level CUDA/TensorRT error on the first frame — and
+        instead of silently running with whatever head/shape the engine
+        happens to have, which would invalidate a PyTorch/TensorRT comparison
+        without anyone noticing.
+
+        TensorRT engines bake their detection head and (for a static export)
+        their input shape into the serialized graph: neither can be changed
+        at inference time, unlike a .pt model where ``end2end=`` and
+        ``imgsz=`` are live toggles. So both are checked here against the
+        engine's own embedded export metadata, before any frame is processed,
+        rather than reactively once a mismatch has already changed results.
+        """
         if not path.is_file():
             raise FileNotFoundError(
                 f"TensorRT engine not found: {path}. Build it on the Jetson first "
@@ -135,10 +159,25 @@ class InferenceSession:
         metadata = _read_engine_header(path)
         self.engine_metadata = metadata
         if metadata is None:
-            return  # No embedded header (e.g. built with raw trtexec); skip shape/batch checks.
+            return  # No embedded header (e.g. built with raw trtexec); skip the checks below.
 
         args = metadata.get("args") or {}
         dynamic = bool(args.get("dynamic", False))
+
+        exported_end2end = metadata.get("end2end")
+        if (
+            requested_end2end is not None
+            and isinstance(exported_end2end, bool)
+            and requested_end2end != exported_end2end
+        ):
+            raise ValueError(
+                f"model.end2end={requested_end2end} does not match this TensorRT engine's "
+                f"detection head, which was exported with end2end={exported_end2end}. The "
+                "engine's head is fixed at export time and can't be switched at inference "
+                f"time: either re-export with end2end={requested_end2end}, or set "
+                f"model.end2end to {exported_end2end} (or null) to match it."
+            )
+
         batch = metadata.get("batch")
         if not dynamic and isinstance(batch, int) and batch != 1:
             raise ValueError(
@@ -146,12 +185,26 @@ class InferenceSession:
                 "pipeline tracks one frame at a time and requires batch=1. Re-export "
                 "with batch=1."
             )
-        if not dynamic:
-            imgsz = metadata.get("imgsz")
-            if isinstance(imgsz, int):
-                imgsz = [imgsz, imgsz]
-            if isinstance(imgsz, list) and len(imgsz) == 2:
-                self.export_shape_hw = [int(imgsz[0]), int(imgsz[1])]
+
+        exported_imgsz = metadata.get("imgsz")
+        if isinstance(exported_imgsz, int):
+            exported_imgsz = [exported_imgsz, exported_imgsz]
+        if not dynamic and isinstance(exported_imgsz, list) and len(exported_imgsz) == 2:
+            self.export_shape_hw = [int(exported_imgsz[0]), int(exported_imgsz[1])]
+            if requested_imgsz is not None:
+                expected = (
+                    [requested_imgsz, requested_imgsz]
+                    if isinstance(requested_imgsz, int)
+                    else [int(requested_imgsz[0]), int(requested_imgsz[1])]
+                )
+                if expected != self.export_shape_hw:
+                    raise ValueError(
+                        f"model.imgsz={requested_imgsz} does not match this TensorRT "
+                        f"engine's export shape {self.export_shape_hw} ([height, width]). "
+                        "A static engine only accepts its exact export shape. Re-export "
+                        f"with imgsz={self.export_shape_hw[0]},{self.export_shape_hw[1]}, "
+                        f"or set model.imgsz to {self.export_shape_hw}."
+                    )
 
     def track(self, frame, **kwargs):
         if self.export_shape_hw is not None:

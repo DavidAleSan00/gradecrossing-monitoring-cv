@@ -4,8 +4,11 @@
 # to TensorRT alone. Compare it against configs/tensorrt.yaml (FP32 TensorRT)
 # to isolate precision, and against configs/pytorch-comparison.yaml only to
 # characterize the full PyTorch-FP32 -> TensorRT-FP16 deployment change.
-# Build weights/yolo26n_fp16.engine on the Jetson first (half=True at export).
+# Build weights/yolo26n_fp16.engine on the Jetson first (half=True at
+# export) — same imgsz/batch/end2end as configs/tensorrt.yaml, only
+# precision differs.
 model:
   path: weights/yolo26n_fp16.engine
   device: "0"
-  end2end: false
+  end2end: true
+  imgsz: [384, 640]

@@ -149,28 +149,31 @@ below before relying on it.
 
 `pyproject.toml`'s pinned `numpy==2.0.2` and `opencv-python==4.13.0.92` are
 unchanged on this branch — they stay correct for Mac and Raspberry Pi. The
-Jetson's NVIDIA-built PyTorch 2.8.0 / Torchvision 0.23.0 wheels (JetPack
-6.2.1, CUDA 12.6) require older `numpy==1.26.4` and `opencv==4.11.0.86`
-instead; pip would otherwise reinstall the pinned versions over them and
-break the Jetson PyTorch build. Rather than adding platform markers (Jetson
-and Raspberry Pi are both `aarch64`, so `platform_machine` can't tell them
-apart), install explicitly in this order on the Jetson:
+tested Jetson combination instead is `numpy==1.26.4`, `opencv-python==
+4.11.0.86`, `torch==2.8.0`, and `torchvision==0.23.0` (JetPack 6.2.1, CUDA
+12.6) — these are **not** installed automatically by the Jetson PyTorch
+wheel; they must be installed explicitly. Rather than adding platform
+markers (Jetson and Raspberry Pi are both `aarch64`, so `platform_machine`
+can't tell them apart) or leaving `pyproject.toml`'s declared dependencies
+silently wrong for the Jetson, [requirements-jetson.txt](requirements-jetson.txt)
+is a second, explicit, version-controlled declaration for this exact
+combination:
 
 ```bash
-# 1. Install the Jetson-provided PyTorch 2.8.0 / Torchvision 0.23.0 wheels first
-#    (NVIDIA's instructions for JetPack 6.2.1 / Jetson Linux 36.4.4), which pull
-#    in numpy==1.26.4 as their matching dependency.
-# 2. Install this package WITHOUT its pinned numpy/opencv so it doesn't override them:
+# 1. Install NVIDIA's own Jetson wheels for PyTorch 2.8.0 / Torchvision 0.23.0
+#    (JetPack 6.2.1 / Jetson Linux 36.4.4) per NVIDIA's instructions for your
+#    JetPack release — these do not come from plain PyPI.
+# 2. Install this package's code without pyproject.toml's Mac/Pi numpy/opencv
+#    pins, then install the Jetson-tested versions instead:
 python -m pip install -e . --no-deps
-python -m pip install ultralytics==8.4.78 lap==0.5.13 pyyaml==6.0.3
-python -m pip install opencv-python==4.11.0.86
-# 3. Confirm the resolved versions actually in use (recorded automatically in
+python -m pip install -r requirements-jetson.txt
+# 3. Confirm the versions actually resolved (also recorded automatically in
 #    summary.json "inference.versions" for every run — see below):
-python -c "import numpy, cv2, torch; print(numpy.__version__, cv2.__version__, torch.__version__)"
+python -c "import numpy, cv2, torch, torchvision; print(numpy.__version__, cv2.__version__, torch.__version__, torchvision.__version__)"
 ```
 
 TensorRT itself (10.3.0) and its Python bindings are provided by JetPack as a
-system package, not a pip package — don't add it to `pyproject.toml`.
+system package, not a pip package — it is not in `requirements-jetson.txt`.
 
 ### Runtime selection
 
@@ -188,9 +191,13 @@ way, so switching the runtime cannot silently change the monitoring algorithm.
   Ultralytics otherwise, which this wrapper refuses instead), `model.device`
   isn't set to something incompatible like `cpu`/`mps`, and — when the engine
   carries Ultralytics' embedded export metadata — that it was built with
-  `batch=1` (this pipeline tracks one frame at a time) and, for a static
-  (non-dynamic) export, that the configured `model.imgsz` can't silently drift
-  from the export shape on later frames.
+  `batch=1` (this pipeline tracks one frame at a time), that the configured
+  `model.end2end` matches the detection head actually baked into the engine
+  at export time (the engine's head can't be switched at inference time the
+  way a `.pt` model's can — see "Detection head" below), and that, for a
+  static (non-dynamic) export, the configured `model.imgsz` exactly matches
+  the export shape — checked once up front, not just reactively if a later
+  frame's request happens to differ.
 - After the first frame, it records the *actual* resolved backend, device,
   precision (FP16/FP32, read from the loaded engine/model, not assumed from
   the filename), end2end/dynamic/stride flags, the full embedded export
@@ -198,57 +205,98 @@ way, so switching the runtime cannot silently change the monitoring algorithm.
   and a SHA-256 of the weights file — written into `summary.json` under
   `inference`.
 - `--device` (CLI) / `model.device` (config) and `model.end2end` are passed
-  straight through to `model.track()` for both `.pt` and `.engine`.
+  straight through to `model.track()` for both `.pt` and `.engine`. For
+  `.pt`, this live-switches between the model's two trained heads; for
+  `.engine` it's a no-op (the graph is fixed), which is exactly why the
+  pre-flight check above exists — the value is still validated, not just
+  passed through and ignored.
+
+### Detection head (end2end)
+
+YOLO26 can run either its native NMS-free "end2end" (one-to-one) head or the
+older one-to-many head plus a separate NMS step; `yolo26n.pt`'s own default
+is end2end **true** (confirmed by loading the checkpoint and reading
+`model.model.end2end`). The NCNN/ONNX comparison branches force
+`end2end=false` because those export formats can't represent the end2end
+head's TopK op at all. **That restriction does not apply to TensorRT here.**
+Inspecting the installed Ultralytics 8.4.78 exporter
+(`ultralytics/engine/exporter.py`, around the `fmt == "engine"` branch), the
+only cases where it forces `end2end=False` for an engine export are
+TensorRT&nbsp;<&nbsp;8.5.0 (we're on 10.3.0), and **INT8** export on
+JetPack&nbsp;6 with TensorRT&nbsp;==&nbsp;10.3.0 specifically (a known
+Ultralytics/TensorRT bug, tracked upstream) — neither applies to our
+FP32/FP16 export. So both matched configs set `model.end2end: true`,
+matching the checkpoint's own default rather than copying the NCNN/ONNX
+branches' unrelated workaround.
+
+Because the engine's head is fixed at export time — unlike a `.pt` model,
+where `end2end=` is a live inference-time toggle between the model's two
+trained heads — `InferenceSession` cross-checks `model.end2end` against the
+engine's own embedded export metadata before any frame runs, and raises a
+clear error on a mismatch instead of silently running with whichever head
+the engine happens to have.
 
 ### Building the engine (run later, on the Jetson — not executed here)
 
-Export once per (model, image size, batch, precision) combination. Keep
-engine building **outside** any timed pipeline run.
+Export once per (model, image size, batch, precision, end2end) combination.
+Keep engine building **outside** any timed pipeline run. `imgsz=384,640`
+matches PyTorch's own rect-computed padding for DSCF0017 (1280x720) at the
+default `imgsz=640` — confirm this for your own video with a prior PyTorch
+run's `summary.json` → `inference.input_shape_hw` before exporting, since a
+different aspect ratio computes a different shape and a mismatched static
+engine now fails fast up front rather than silently resizing.
 
 ```bash
 # FP32, matched to configs/pytorch-comparison.yaml and configs/tensorrt.yaml:
-yolo export model=weights/yolo26n.pt format=engine imgsz=640 batch=1 device=0 half=False
+yolo export model=weights/yolo26n.pt format=engine imgsz=384,640 batch=1 device=0 half=False end2end=True
 
 # FP16 — a SEPARATE precision comparison (see configs/tensorrt-fp16.yaml):
-yolo export model=weights/yolo26n.pt format=engine imgsz=640 batch=1 device=0 half=True
+yolo export model=weights/yolo26n.pt format=engine imgsz=384,640 batch=1 device=0 half=True end2end=True
 mv weights/yolo26n.engine weights/yolo26n_fp16.engine  # avoid overwriting the FP32 engine
 # then re-run the FP32 export command above to get weights/yolo26n.engine back
 ```
 
-`imgsz`, `batch`, `device`, and precision are all explicit on the command
-line rather than left to tool defaults. Match `imgsz` to what the PyTorch run
-actually uses for your videos (check `summary.json`'s
-`inference.input_shape_hw` from a prior PyTorch run, the same way the
-existing NCNN/ONNX comparison branches do) — PyTorch's rectangular padding
-does not always equal the configured `imgsz`, and a mismatched static engine
-fails fast with a clear error rather than silently resizing.
+`imgsz`, `batch`, `device`, `half`, and `end2end` are all explicit on the
+command line rather than left to tool/model defaults, and must match
+`configs/tensorrt.yaml` / `configs/tensorrt-fp16.yaml` exactly —
+`InferenceSession` enforces this at load time rather than merely recording a
+mismatch afterward.
 
 ### Matched comparison runs
 
+Using DSCF0017, the full ten-minute video available on the Jetson (not a
+short clip):
+
 ```bash
-python -m pipeline run --video clip01 --config configs/pytorch-comparison.yaml --output-dir outputs/pytorch
-python -m pipeline run --video clip01 --config configs/tensorrt.yaml --output-dir outputs/tensorrt
+python -m pipeline run --video DSCF0017 --config configs/pytorch-comparison.yaml --output-dir outputs/pytorch
+python -m pipeline run --video DSCF0017 --config configs/tensorrt.yaml --output-dir outputs/tensorrt
 ```
 
-Both configs pin `model.device: "0"` (the Jetson's GPU) and `model.end2end:
-false`, so the inference runtime is the only variable between the two runs —
-see "Design assumptions" below for why PyTorch also runs on GPU here rather
-than CPU. Add `--timing` to either command to additionally record
-per-stage wall-clock time (`detection`, `stabilization`, `background`,
-`video_output`) in `summary.json`'s `performance.stage_timings`, useful for
-telling whether detection, stabilization, background processing, or video
-output is the bottleneck on the Jetson. Timing is off by default: enabling it
-adds one `torch.cuda.synchronize()` call per frame after detection (so the
-measured detection time reflects actual GPU completion, not just kernel
-enqueue time on TensorRT's asynchronous execution) — real overhead that an
-ordinary run never pays. Don't compare an un-timed run's throughput against
-a `--timing` run's throughput.
+Both configs pin `model.device: "0"` (the Jetson's GPU), `model.end2end:
+true`, and `model.imgsz: [384, 640]`, so the inference runtime is the only
+variable between the two runs — see "Design assumptions" below for why
+PyTorch also runs on GPU here rather than CPU. Add `--timing` to either
+command to additionally record per-stage wall-clock time in `summary.json`'s
+`performance.stage_timings`: `stabilization`, `detection_tracking` (YOLO
+inference **plus** BoT-SORT association and the ZOI/train spatial-context
+pass — not YOLO-only inference time; Ultralytics' own per-call
+`inference_ms`, in `summary.json`'s `inference` block, is the closer
+YOLO-only number), `background`, and `video_output`. Video decoding
+(`cap.read()`) and the crossing-state-machine/temporal decision logic are
+**not** measured by any stage and are not included in
+`performance.stage_timings` at all — see `pipeline/timing.py` for the exact
+scope of each stage. Timing is off by default: enabling it adds one
+`torch.cuda.synchronize()` call per frame inside `detection_tracking` (so its
+measured time reflects actual GPU completion, not just kernel enqueue time on
+TensorRT's asynchronous execution) — real overhead that an ordinary run never
+pays. Don't compare an un-timed run's throughput against a `--timing` run's
+throughput.
 
 For the FP16 variant, labeled as a separate precision choice rather than part
 of the matched runtime-only comparison:
 
 ```bash
-python -m pipeline run --video clip01 --config configs/tensorrt-fp16.yaml --output-dir outputs/tensorrt-fp16
+python -m pipeline run --video DSCF0017 --config configs/tensorrt-fp16.yaml --output-dir outputs/tensorrt-fp16
 ```
 
 `summary.json`'s `performance` block distinguishes three rates that are easy
@@ -265,25 +313,35 @@ duration divided by processing time, as before.
 - **PyTorch baseline runs on GPU, not CPU** (`configs/pytorch-comparison.yaml`
   sets `device: "0"`). This isolates the runtime/engine as the only variable;
   it does not reflect a CPU-only deployment. Confirmed with the project owner.
-- **`end2end: false` on both matched configs** mirrors the NCNN/ONNX
-  comparison branches, where YOLO26's one-to-one end2end head couldn't be
-  exported (unsupported TopK op). Whether Ultralytics 8.4.78's TensorRT export
-  has the same limitation, or supports end2end via a fused NMS plugin, is
-  **unverified** — this wasn't tested. If your Jetson export succeeds with
-  `end2end=true`, re-export both sides with it set consistently and update
-  these two config files together.
+- **`end2end: true` on both matched configs** matches `yolo26n.pt`'s own
+  default head and is unaffected by Ultralytics 8.4.78's TensorRT export
+  restrictions, which only disable end2end for TensorRT<8.5.0 or for INT8
+  export on JetPack 6 with TensorRT==10.3.0 — see "Detection head" above.
+  This has not been exported/tested on the actual Jetson; if your export
+  disables end2end for a reason not covered above, `InferenceSession` will
+  raise a clear mismatch error rather than running with the wrong head, and
+  both config files need updating together.
+- **`imgsz: [384, 640]` on both matched configs** is DSCF0017-specific
+  (1280x720 at the default `imgsz=640`). A different video's native aspect
+  ratio needs its own matching shape in both the export command and both
+  configs — re-derive it from a prior PyTorch run's `inference.input_shape_hw`
+  rather than assuming 384x640 applies generally.
 - **Engine metadata header format** (`_read_engine_header` in
   `pipeline/inference.py`) is read directly as raw bytes (4-byte length +
   JSON), matching Ultralytics' own `TensorRTBackend.load_model`, so the
-  pre-flight shape/batch checks work without importing `tensorrt` (not
-  installed on Mac/Pi). If Ultralytics changes this header format in a future
-  version, that pre-check silently degrades to "no header found" (skipped,
-  not failed) rather than erroring — the engine still loads and validates
-  through Ultralytics' own path either way.
+  pre-flight end2end/shape/batch checks work without importing `tensorrt`
+  (not installed on Mac/Pi). If Ultralytics changes this header format in a
+  future version, that pre-check silently degrades to "no header found"
+  (skipped, not failed) rather than erroring — the engine still loads and
+  validates through Ultralytics' own path either way.
 - **DLA cores, INT8, and dynamic-shape engines** are out of scope; the
   pipeline always tracks a single frame per call, so only `batch=1` static or
   dynamic engines are supported, and DLA/INT8 export flags aren't threaded
   through.
+- **None of this has been executed.** No export, install, benchmark, or
+  Jetson/remote-device command has been run; everything above is derived from
+  reading the installed Ultralytics 8.4.78 source and this pipeline's code,
+  not from an observed result.
 
 ## Run Outputs
 

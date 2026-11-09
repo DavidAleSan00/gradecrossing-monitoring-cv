@@ -1,7 +1,14 @@
-# TensorRT comparison, matched to configs/pytorch-comparison.yaml: GPU, FP32.
-# Build weights/yolo26n.engine on the Jetson first (see README.md:
-# "TensorRT runtime comparison" for the export command). Not executed here.
+# TensorRT comparison, matched to configs/pytorch-comparison.yaml: GPU, FP32,
+# same end2end head, same input shape. Build weights/yolo26n.engine on the
+# Jetson first with the export command in README.md ("TensorRT runtime
+# comparison") — imgsz, batch, device, precision, and end2end are all
+# explicit there and must match this file. Not executed here.
+#
+# InferenceSession cross-checks end2end/batch/imgsz against this exact
+# engine's own embedded export metadata before any frame runs, and fails
+# clearly on a mismatch rather than silently using whatever the engine has.
 model:
   path: weights/yolo26n.engine
   device: "0"
-  end2end: false  # Matches the PyTorch baseline; revisit if your export needs end2end=true
+  end2end: true
+  imgsz: [384, 640]

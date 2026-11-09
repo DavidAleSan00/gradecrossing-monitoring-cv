@@ -20,7 +20,11 @@ class ModelConfig:
     end2end: bool | None = None
     conf: float = 0.25
     train_conf: float = 0.05
-    imgsz: int = 640
+    # int: square/max-dimension size with automatic rect padding (default).
+    # [height, width]: a fixed, explicit input shape — required to pin a
+    # comparison to a static TensorRT engine's exact export shape rather
+    # than rely on PyTorch's auto-computed rect padding happening to match.
+    imgsz: int | list[int] = 640
     vehicle_classes: list = field(default_factory=lambda: [2, 3, 5, 7])
     train_class: int = 6
 
@@ -81,10 +85,11 @@ class ThresholdsConfig:
 
 @dataclass
 class TimingConfig:
-    # Optional per-stage wall-clock timing (detection/stabilization/background/
-    # output) for bottleneck analysis. Off by default: ordinary runs pay no
-    # timing overhead and perform no extra GPU synchronization. See
-    # pipeline/timing.py for what enabling this changes.
+    # Optional per-stage wall-clock timing (stabilization/detection_tracking/
+    # background/video_output) for bottleneck analysis. Off by default:
+    # ordinary runs pay no timing overhead and perform no extra GPU
+    # synchronization. See pipeline/timing.py for exactly what each stage
+    # covers, what's enabled changes, and what isn't measured at all.
     enabled: bool = False
 
 
@@ -149,6 +154,21 @@ def _nonnegative_int(value: Any, path: str) -> None:
         raise ValueError(f"Config value '{path}' must be an integer >= 0")
 
 
+def _validate_imgsz(value: Any, path: str) -> None:
+    error = ValueError(
+        f"Config value '{path}' must be a positive integer, or a [height, width] "
+        "list of two positive integers"
+    )
+    if isinstance(value, int) and not isinstance(value, bool):
+        if value < 1:
+            raise error
+        return
+    if isinstance(value, list) and len(value) == 2:
+        if all(isinstance(v, int) and not isinstance(v, bool) and v >= 1 for v in value):
+            return
+    raise error
+
+
 def validate_config(cfg: PipelineConfig) -> PipelineConfig:
     """Validate types, ranges, and cross-field invariants; return ``cfg``."""
     model = cfg.model
@@ -160,6 +180,7 @@ def validate_config(cfg: PipelineConfig) -> PipelineConfig:
         raise ValueError("Config value 'model.device' must be null or a non-empty string")
     if model.end2end is not None and not isinstance(model.end2end, bool):
         raise ValueError("Config value 'model.end2end' must be null or boolean")
+    _validate_imgsz(model.imgsz, "model.imgsz")
     if not isinstance(model.vehicle_classes, list) or not model.vehicle_classes:
         raise ValueError("Config value 'model.vehicle_classes' must be a non-empty list")
     if any(isinstance(value, bool) or not isinstance(value, int) for value in model.vehicle_classes):

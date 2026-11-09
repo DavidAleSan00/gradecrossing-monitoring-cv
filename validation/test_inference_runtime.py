@@ -77,6 +77,17 @@ def test_invalid_device_is_rejected():
         load_config(overrides={"model": {"end2end": "false"}})
 
 
+def test_imgsz_accepts_int_or_hw_list():
+    assert load_config(overrides={"model": {"imgsz": 640}}).model.imgsz == 640
+    assert load_config(overrides={"model": {"imgsz": [384, 640]}}).model.imgsz == [384, 640]
+
+
+def test_imgsz_rejects_invalid_shapes():
+    for bad in (0, -1, [640], [384, 640, 3], [384, "640"], [0, 640], True, "640"):
+        with pytest.raises(ValueError, match="model.imgsz"):
+            load_config(overrides={"model": {"imgsz": bad}})
+
+
 def test_missing_engine_file_fails_clearly(tmp_path):
     with pytest.raises(FileNotFoundError, match="TensorRT engine not found"):
         InferenceSession(object(), str(tmp_path / "missing.engine"))
@@ -107,6 +118,61 @@ def test_engine_batch_other_than_one_is_rejected(tmp_path, monkeypatch):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     with pytest.raises(ValueError, match="requires batch=1"):
         InferenceSession(object(), str(engine))
+
+
+def test_engine_end2end_mismatch_is_rejected_upfront(tmp_path, monkeypatch):
+    engine = tmp_path / "model.engine"
+    _write_engine(engine, {
+        "imgsz": [384, 640], "batch": 1, "end2end": True, "args": {"dynamic": False},
+    })
+    import torch
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    with pytest.raises(ValueError, match="does not match this TensorRT engine's detection head"):
+        InferenceSession(object(), str(engine), end2end=False)
+
+
+def test_engine_end2end_match_is_accepted_upfront(tmp_path, monkeypatch):
+    engine = tmp_path / "model.engine"
+    _write_engine(engine, {
+        "imgsz": [384, 640], "batch": 1, "end2end": True, "args": {"dynamic": False},
+    })
+    import torch
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    session = InferenceSession(object(), str(engine), end2end=True)
+    assert session.export_shape_hw == [384, 640]
+
+
+def test_engine_end2end_unset_request_skips_check(tmp_path, monkeypatch):
+    engine = tmp_path / "model.engine"
+    _write_engine(engine, {
+        "imgsz": [384, 640], "batch": 1, "end2end": True, "args": {"dynamic": False},
+    })
+    import torch
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    InferenceSession(object(), str(engine))  # end2end=None: no cross-check, no raise
+
+
+def test_engine_imgsz_mismatch_is_rejected_upfront(tmp_path, monkeypatch):
+    engine = tmp_path / "model.engine"
+    _write_engine(engine, {"imgsz": [384, 640], "batch": 1, "args": {"dynamic": False}})
+    import torch
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    with pytest.raises(ValueError, match="does not match this TensorRT engine's export shape"):
+        InferenceSession(object(), str(engine), imgsz=640)  # normalizes to [640, 640]
+
+
+def test_engine_imgsz_match_is_accepted_upfront(tmp_path, monkeypatch):
+    engine = tmp_path / "model.engine"
+    _write_engine(engine, {"imgsz": [384, 640], "batch": 1, "args": {"dynamic": False}})
+    import torch
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    session = InferenceSession(object(), str(engine), imgsz=[384, 640])
+    assert session.export_shape_hw == [384, 640]
 
 
 def test_static_engine_shape_is_preserved_on_every_frame(tmp_path, monkeypatch):

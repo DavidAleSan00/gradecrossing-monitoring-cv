@@ -154,6 +154,9 @@ def run_pipeline(
     status_counts: Counter = Counter()
     train_context_counts: Counter = Counter()
     registration_failure_frames = 0
+    # stage_timer never wraps cap.read() (decoding) or state_machine.update()
+    # (temporal logic) below — see pipeline/timing.py for exactly what each
+    # measured stage covers and what's left out.
     stage_timer = StageTimer() if cfg.timing.enabled else None
     try:
         telemetry = TelemetrySink(

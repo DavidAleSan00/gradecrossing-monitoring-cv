@@ -153,7 +153,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
     from .inference import InferenceSession
 
     session = InferenceSession(
-        YOLO(cfg.model.path, task="detect"), cfg.model.path, device=cfg.model.device,
+        YOLO(cfg.model.path, task="detect"), cfg.model.path,
+        device=cfg.model.device, end2end=cfg.model.end2end, imgsz=cfg.model.imgsz,
     )
     run_paths = create_run(entry.id, base_dir=args.output_dir)
     print("Processing:", flush=True)
@@ -217,9 +218,10 @@ def build_parser() -> argparse.ArgumentParser:
                        help="inference device, e.g. cpu, mps, or a CUDA index like '0' "
                             "(overrides config model.device)")
     p_run.add_argument("--timing", action="store_true",
-                       help="record optional per-stage timing (detection/stabilization/"
-                            "background/output) in summary.json; adds GPU sync overhead "
-                            "on CUDA backends (see pipeline/timing.py)")
+                       help="record optional per-stage timing (stabilization/"
+                            "detection_tracking/background/video_output) in summary.json; "
+                            "adds GPU sync overhead on CUDA backends and excludes decode/"
+                            "temporal-logic time (see pipeline/timing.py)")
     p_run.add_argument("--output-dir", default="outputs")
     p_run.set_defaults(func=_cmd_run)
 

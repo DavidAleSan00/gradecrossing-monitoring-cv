@@ -3,10 +3,23 @@
 # Runs the original .pt weights explicitly on the GPU (device "0") rather than
 # relying on Ultralytics' automatic device selection. This isolates the
 # inference runtime/engine as the only variable between this run and
-# configs/tensorrt.yaml: same device, same model, same pipeline settings.
-# end2end is pinned to false so it matches configs/tensorrt.yaml even if that
-# TensorRT export turns out to need the one-to-many/NMS head (see README.md).
+# configs/tensorrt.yaml: same device, same model, same input shape, same
+# detection head, same pipeline settings.
+#
+# end2end: true keeps YOLO26n's native NMS-free one-to-one head (confirmed as
+# this checkpoint's own default — not a project-wide change). Unlike the
+# NCNN/ONNX comparison branches, Ultralytics 8.4.78's TensorRT exporter only
+# disables end2end for TensorRT<8.5.0 or for int8 export on JetPack 6 with
+# TensorRT==10.3.0 (see ultralytics/engine/exporter.py); neither applies to
+# our FP32/FP16, TensorRT 10.3.0 case, so there is no reason to force it off
+# here the way the NCNN export needed to.
+#
+# imgsz: [384, 640] pins the exact input shape (matching PyTorch's own
+# rect-computed padding for this 1280x720 video at the default imgsz=640) so
+# it is explicit and guaranteed identical to the static TensorRT export,
+# rather than relying on both sides happening to compute the same shape.
 model:
   path: weights/yolo26n.pt
   device: "0"
-  end2end: false
+  end2end: true
+  imgsz: [384, 640]

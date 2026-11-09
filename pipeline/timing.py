@@ -1,14 +1,32 @@
 """Optional, opt-in per-stage wall-clock timing for bottleneck analysis.
 
 Disabled by default so ordinary runs pay no overhead and perform no GPU
-synchronization. When enabled, each measured stage's elapsed time includes
-only what happens inside its own ``measure()`` block; CUDA kernels launched by
-an inference backend (e.g. TensorRT) run asynchronously, so the "detection"
-stage explicitly synchronizes the device before closing its timer. That sync
-is measurement overhead: it forces the GPU to finish work that would normally
-overlap with CPU-side stabilization/background/output work on later frames.
-Treat enabled-timing runs as a diagnostic of per-stage cost, not as a
-precise measurement of steady-state end-to-end throughput.
+synchronization. When enabled, four stages are measured in
+pipeline/perception/front.py and pipeline/controller.py, each covering more
+than its name alone suggests:
+
+- "stabilization": feature detection/registration estimate plus building the
+  stabilized ZOI mask and the registered frame.
+- "detection_tracking": YOLO inference, BoT-SORT association, and the ZOI/
+  train spatial-context pass done right after it — not YOLO-only inference
+  time. (Ultralytics' own per-call "inference_ms", in each run's
+  `inference` metadata, is the closer YOLO-only number.)
+- "background": MOG2 background/debris detection.
+- "video_output": drawing and writing both annotated/background video frames.
+
+Explicitly NOT measured by any stage, so `sum(stage totals)` understates
+total per-frame wall time: video decoding (`cap.read()` in controller.py),
+the crossing-state-machine/temporal decision logic, and per-frame CSV
+telemetry writes.
+
+Each measured stage's elapsed time includes only what happens inside its own
+``measure()`` block; CUDA kernels launched by an inference backend (e.g.
+TensorRT) run asynchronously, so "detection_tracking" explicitly synchronizes
+the device before closing its timer. That sync is measurement overhead: it
+forces the GPU to finish work that would normally overlap with CPU-side
+stabilization/background/output work on later frames. Treat enabled-timing
+runs as a diagnostic of per-stage cost, not as a precise measurement of
+steady-state end-to-end throughput.
 """
 
 from __future__ import annotations
