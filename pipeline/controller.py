@@ -121,7 +121,7 @@ def run_pipeline(
     output_fps = fps / cfg.frame_step
     annotated_writer = None
     background_writer = None
-    if run_paths is not None:
+    if run_paths is not None and cfg.video_output_enabled:
         try:
             annotated_writer = _open_video_writer(
                 run_paths.annotated_video, output_fps, (w, h),
@@ -279,7 +279,7 @@ def run_pipeline(
         # metadata over-reports the frame count.
         progress_callback(source_frame_count, source_frame_count)
 
-    if loop_completed and run_paths is not None:
+    if loop_completed and run_paths is not None and cfg.video_output_enabled:
         for path in (run_paths.annotated_video, run_paths.background_video):
             if not path.is_file() or path.stat().st_size == 0:
                 raise RuntimeError(f"Video was not finalized correctly: {path}")

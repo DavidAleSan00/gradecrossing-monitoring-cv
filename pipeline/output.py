@@ -120,11 +120,12 @@ def save_run_results(
     )
 
     artifacts = {
-        "annotated_video": paths.annotated_video.name,
-        "background_video": paths.background_video.name,
         "debug_timeline": paths.debug_timeline_csv.name,
         "config_used": paths.config_used_yaml.name,
     }
+    if config_snapshot.get("video_output_enabled", True):
+        artifacts["annotated_video"] = paths.annotated_video.name
+        artifacts["background_video"] = paths.background_video.name
     _validate_artifacts(paths, artifacts)
     elapsed = result.processing_elapsed_s
     summary = {

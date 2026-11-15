@@ -141,6 +141,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
     overrides = {}
     if args.model:
         overrides["model"] = {"path": args.model}
+    if args.no_video:
+        overrides["video_output_enabled"] = False
     cfg = load_config(args.config, overrides=overrides or None)
 
     print(f"\nPreparing: {entry.id}", flush=True)
@@ -205,6 +207,10 @@ def build_parser() -> argparse.ArgumentParser:
                        help="path to a YAML config file (default: configs/default.yaml)")
     p_run.add_argument("--model", default=None,
                        help="YOLO weights path (overrides config model.path)")
+    p_run.add_argument("--no-video", action="store_true",
+                       help="disable annotated/background video output "
+                            "(overrides config video_output_enabled; "
+                            "CSV/event logging is unaffected)")
     p_run.add_argument("--output-dir", default="outputs")
     p_run.set_defaults(func=_cmd_run)
 

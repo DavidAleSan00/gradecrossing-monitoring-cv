@@ -86,6 +86,7 @@ class PipelineConfig:
     zoi: ZoiConfig = field(default_factory=ZoiConfig)
     occupancy: OccupancyConfig = field(default_factory=OccupancyConfig)
     thresholds: ThresholdsConfig = field(default_factory=ThresholdsConfig)
+    video_output_enabled: bool = True
 
     def snapshot(self) -> dict[str, Any]:
         """Exact resolved values for config_used.yaml."""
@@ -203,6 +204,8 @@ def validate_config(cfg: PipelineConfig) -> PipelineConfig:
 
     if not isinstance(cfg.background.detect_shadows, bool):
         raise TypeError("background.detect_shadows must be boolean")
+    if not isinstance(cfg.video_output_enabled, bool):
+        raise TypeError("video_output_enabled must be boolean")
     return cfg
 
 

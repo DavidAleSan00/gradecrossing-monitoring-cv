@@ -5,6 +5,7 @@
 # deployment. Every run still writes the fully resolved tree to config_used.yaml.
 
 # frame_step: 2
+# video_output_enabled: true
 
 # model:
 #   path: weights/yolo26n.pt
