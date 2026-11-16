@@ -67,6 +67,25 @@ def _release_video_writers(*writers) -> None:
             writer.release()
 
 
+def _model_video_size(
+    width: int, height: int, imgsz: int | list[int] | tuple[int, ...],
+) -> tuple[int, int]:
+    """Fit the image into the model's configured bounds without adding padding."""
+    sizes = (imgsz,) if isinstance(imgsz, int) else imgsz
+    scale = min(sizes[-1] / width, sizes[0] / height)
+    # MP4 encoders can crop odd dimensions, so use even dimensions from the start.
+    output_width = max(2, 2 * round(width * scale / 2))
+    output_height = max(2, 2 * round(height * scale / 2))
+    return output_width, output_height
+
+
+def _write_video_frame(writer, frame: np.ndarray, size: tuple[int, int]) -> None:
+    if (frame.shape[1], frame.shape[0]) != size:
+        interpolation = cv2.INTER_AREA if size[0] <= frame.shape[1] else cv2.INTER_LINEAR
+        frame = cv2.resize(frame, size, interpolation=interpolation)
+    writer.write(frame)
+
+
 @dataclass
 class PipelineResult:
     """Summary, intervals, and telemetry produced by one run."""
@@ -108,10 +127,19 @@ def run_pipeline(
     fps          = cap.get(cv2.CAP_PROP_FPS)
     reported_total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    if h == 0 or w == 0:
+    coded_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    if h == 0 or coded_w == 0:
         cap.release()
         raise RuntimeError(f"Could not open video: {video_path}")
+    # Some sources (e.g. anamorphic 720x480 NTSC DV) store non-square pixels:
+    # OpenCV decodes/reports the raw coded width, but browsers (and anyone
+    # clicking a ZOI in the region configurator) see the display width after
+    # applying the sample aspect ratio. Resizing every frame to that display
+    # width below keeps this pipeline's coordinate space identical to the one
+    # ZOI points were authored in, instead of silently reinterpreting them
+    # against a narrower/wider frame.
+    sar_num, sar_den = cap.get(cv2.CAP_PROP_SAR_NUM), cap.get(cv2.CAP_PROP_SAR_DEN)
+    w = round(coded_w * sar_num / sar_den) if sar_num > 0 and sar_den > 0 else coded_w
     if fps == 0:
         cap.release()
         raise RuntimeError(
@@ -121,13 +149,15 @@ def run_pipeline(
     output_fps = fps / cfg.frame_step
     annotated_writer = None
     background_writer = None
+    video_size = (w, h)
     if run_paths is not None and cfg.video_output_enabled:
+        video_size = _model_video_size(w, h, cfg.model.imgsz)
         try:
             annotated_writer = _open_video_writer(
-                run_paths.annotated_video, output_fps, (w, h),
+                run_paths.annotated_video, output_fps, video_size,
             )
             background_writer = _open_video_writer(
-                run_paths.background_video, output_fps, (w, h),
+                run_paths.background_video, output_fps, video_size,
             )
         except BaseException:
             cap.release()
@@ -181,6 +211,8 @@ def run_pipeline(
             ret, frame = cap.read()
             if not ret:
                 break
+            if w != coded_w:
+                frame = cv2.resize(frame, (w, h), interpolation=cv2.INTER_LINEAR)
 
             source_frame_count += 1
             source_time = frame_clock.timestamp(cap, source_frame_count)
@@ -249,8 +281,8 @@ def run_pipeline(
                     clear_confirmation_s=cfg.occupancy.clear_confirmation_s,
                     train_context=train_context,
                 )
-                annotated_writer.write(frame_drawn)
-                background_writer.write(draw_background_frame(
+                _write_video_frame(annotated_writer, frame_drawn, video_size)
+                frame_drawn = draw_background_frame(
                     sense.background_frame,
                     zoi_points,
                     sense.debris_mask,
@@ -258,7 +290,8 @@ def run_pipeline(
                     state.debris_persistence_s,
                     sense.observations.background_ready,
                     train_context,
-                ))
+                )
+                _write_video_frame(background_writer, frame_drawn, video_size)
             report_progress(source_frame_count)
         loop_completed = True
     finally:

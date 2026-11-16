@@ -18,7 +18,7 @@ class ModelConfig:
     path: str = "weights/yolo26n.pt"
     conf: float = 0.25
     train_conf: float = 0.05
-    imgsz: int = 640
+    imgsz: int = 480
     vehicle_classes: list = field(default_factory=lambda: [2, 3, 5, 7])
     train_class: int = 6
 
@@ -79,7 +79,7 @@ class ThresholdsConfig:
 
 @dataclass
 class PipelineConfig:
-    frame_step: int = 2
+    frame_step: int = 5
     model: ModelConfig = field(default_factory=ModelConfig)
     optical_flow: OpticalFlowConfig = field(default_factory=OpticalFlowConfig)
     background: BackgroundConfig = field(default_factory=BackgroundConfig)
@@ -128,14 +128,9 @@ def _positive(value: Any, path: str, *, allow_zero: bool = False) -> None:
         raise ValueError(f"Config value '{path}' must be {operator}")
 
 
-def _positive_int(value: Any, path: str) -> None:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise ValueError(f"Config value '{path}' must be an integer >= 1")
-
-
-def _nonnegative_int(value: Any, path: str) -> None:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError(f"Config value '{path}' must be an integer >= 0")
+def _integer(value: Any, path: str, minimum: int = 0) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise ValueError(f"Config value '{path}' must be an integer >= {minimum}")
 
 
 def validate_config(cfg: PipelineConfig) -> PipelineConfig:
@@ -145,59 +140,48 @@ def validate_config(cfg: PipelineConfig) -> PipelineConfig:
         raise ValueError("Config value 'model.path' must be a non-empty string")
     if not isinstance(model.vehicle_classes, list) or not model.vehicle_classes:
         raise ValueError("Config value 'model.vehicle_classes' must be a non-empty list")
-    if any(isinstance(value, bool) or not isinstance(value, int) for value in model.vehicle_classes):
-        raise TypeError("Every model.vehicle_classes entry must be an integer")
+    for class_id in model.vehicle_classes:
+        _integer(class_id, "model.vehicle_classes")
     if len(set(model.vehicle_classes)) != len(model.vehicle_classes):
         raise ValueError("model.vehicle_classes must not contain duplicates")
-    if any(value < 0 for value in model.vehicle_classes):
-        raise ValueError("model.vehicle_classes entries must be >= 0")
-    if isinstance(model.train_class, bool) or not isinstance(model.train_class, int):
-        raise TypeError("Config value 'model.train_class' must be an integer")
-    if model.train_class < 0:
-        raise ValueError("model.train_class must be >= 0")
+    _integer(model.train_class, "model.train_class")
     if model.train_class in model.vehicle_classes:
         raise ValueError("model.train_class must not also be a vehicle class")
 
     flow, bg, zoi, occupancy, thresholds = (
         cfg.optical_flow, cfg.background, cfg.zoi, cfg.occupancy, cfg.thresholds,
     )
-    for value, path in (
-        (cfg.frame_step, "frame_step"),
-        (flow.max_corners, "optical_flow.max_corners"),
-        (flow.block_size, "optical_flow.block_size"),
-        (flow.win_size, "optical_flow.win_size"),
-        (bg.history, "background.history"),
-        (bg.global_change_reset_frames, "background.global_change_reset_frames"),
-    ):
-        _positive_int(value, path)
-    for value, path, low, high in (
-        (model.conf, "model.conf", 0.0, 1.0),
-        (model.train_conf, "model.train_conf", 0.0, 1.0),
-        (flow.quality_level, "optical_flow.quality_level", 1e-9, 1.0),
-        (bg.global_change_zoi_ratio, "background.global_change_zoi_ratio", 1e-9, 1.0),
-        (zoi.vehicle_overlap_ratio, "zoi.vehicle_overlap_ratio", 0.0, 1.0),
-        (zoi.train_occupancy_ratio, "zoi.train_occupancy_ratio", 0.0, 1.0),
-        (occupancy.continuity_min_iou, "occupancy.continuity_min_iou", 1e-9, 1.0),
-        (occupancy.anchor_overlap_min, "occupancy.anchor_overlap_min", 1e-9, 1.0),
-        (occupancy.foreground_support_min_ratio, "occupancy.foreground_support_min_ratio", 0.0, 1.0),
-        (thresholds.debris_min_zoi_ratio, "thresholds.debris_min_zoi_ratio", 0.0, 1.0),
-        (thresholds.debris_match_iou, "thresholds.debris_match_iou", 1e-9, 1.0),
-    ):
-        _range(value, path, low, high)
-    for value, path, allow_zero in (
-        (flow.min_distance, "optical_flow.min_distance", False),
-        (bg.var_threshold, "background.var_threshold", False),
-        (zoi.train_exclusion_grace_s, "zoi.train_exclusion_grace_s", True),
-        (occupancy.clear_confirmation_s, "occupancy.clear_confirmation_s", True),
-        (occupancy.anchor_max_confirmation_gap_s, "occupancy.anchor_max_confirmation_gap_s", False),
-        (occupancy.foreground_support_expand_ratio, "occupancy.foreground_support_expand_ratio", True),
-        (thresholds.vehicle_alert_s, "thresholds.vehicle_alert_s", False),
-        (thresholds.debris_alert_s, "thresholds.debris_alert_s", True),
-        (thresholds.debris_clear_confirmation_s, "thresholds.debris_clear_confirmation_s", True),
-    ):
-        _positive(value, path, allow_zero=allow_zero)
-    _nonnegative_int(flow.max_level, "optical_flow.max_level")
-    _nonnegative_int(
+    # Counts and window sizes must be positive whole numbers.
+    _integer(cfg.frame_step, "frame_step", 1)
+    _integer(flow.max_corners, "optical_flow.max_corners", 1)
+    _integer(flow.block_size, "optical_flow.block_size", 1)
+    _integer(flow.win_size, "optical_flow.win_size", 1)
+    _integer(bg.history, "background.history", 1)
+    _integer(bg.global_change_reset_frames, "background.global_change_reset_frames", 1)
+    # Confidence and overlap ratios must stay within their bounds.
+    _range(model.conf, "model.conf", 0.0, 1.0)
+    _range(model.train_conf, "model.train_conf", 0.0, 1.0)
+    _range(flow.quality_level, "optical_flow.quality_level", 1e-9, 1.0)
+    _range(bg.global_change_zoi_ratio, "background.global_change_zoi_ratio", 1e-9, 1.0)
+    _range(zoi.vehicle_overlap_ratio, "zoi.vehicle_overlap_ratio", 0.0, 1.0)
+    _range(zoi.train_occupancy_ratio, "zoi.train_occupancy_ratio", 0.0, 1.0)
+    _range(occupancy.continuity_min_iou, "occupancy.continuity_min_iou", 1e-9, 1.0)
+    _range(occupancy.anchor_overlap_min, "occupancy.anchor_overlap_min", 1e-9, 1.0)
+    _range(occupancy.foreground_support_min_ratio, "occupancy.foreground_support_min_ratio", 0.0, 1.0)
+    _range(thresholds.debris_min_zoi_ratio, "thresholds.debris_min_zoi_ratio", 0.0, 1.0)
+    _range(thresholds.debris_match_iou, "thresholds.debris_match_iou", 1e-9, 1.0)
+    # Allow zero only where it has a defined meaning, such as no delay.
+    _positive(flow.min_distance, "optical_flow.min_distance")
+    _positive(bg.var_threshold, "background.var_threshold")
+    _positive(zoi.train_exclusion_grace_s, "zoi.train_exclusion_grace_s", allow_zero=True)
+    _positive(occupancy.clear_confirmation_s, "occupancy.clear_confirmation_s", allow_zero=True)
+    _positive(occupancy.anchor_max_confirmation_gap_s, "occupancy.anchor_max_confirmation_gap_s")
+    _positive(occupancy.foreground_support_expand_ratio, "occupancy.foreground_support_expand_ratio", allow_zero=True)
+    _positive(thresholds.vehicle_alert_s, "thresholds.vehicle_alert_s")
+    _positive(thresholds.debris_alert_s, "thresholds.debris_alert_s", allow_zero=True)
+    _positive(thresholds.debris_clear_confirmation_s, "thresholds.debris_clear_confirmation_s", allow_zero=True)
+    _integer(flow.max_level, "optical_flow.max_level")
+    _integer(
         occupancy.foreground_support_min_area,
         "occupancy.foreground_support_min_area",
     )
@@ -206,6 +190,12 @@ def validate_config(cfg: PipelineConfig) -> PipelineConfig:
         raise TypeError("background.detect_shadows must be boolean")
     if not isinstance(cfg.video_output_enabled, bool):
         raise TypeError("video_output_enabled must be boolean")
+    if cfg.video_output_enabled:
+        sizes = model.imgsz if isinstance(model.imgsz, (list, tuple)) else (model.imgsz,)
+        if not 1 <= len(sizes) <= 2:
+            raise ValueError("model.imgsz must have one size or a height and width")
+        for size in sizes:
+            _integer(size, "model.imgsz", 1)
     return cfg
 
 

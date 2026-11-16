@@ -4,14 +4,14 @@
 # pipeline/config.py. Uncomment only values intentionally changed for this
 # deployment. Every run still writes the fully resolved tree to config_used.yaml.
 
-# frame_step: 2
+# frame_step: 5
 # video_output_enabled: true
 
 # model:
 #   path: weights/yolo26n.pt
 #   conf: 0.25
 #   train_conf: 0.05
-#   imgsz: 640
+#   imgsz: 480  # YOLO input size and saved video bounds; preserves video proportions.
 #   vehicle_classes: [2, 3, 5, 7]
 #   train_class: 6
 
