@@ -27,6 +27,57 @@ from .overlay import draw_background_frame, draw_frame
 
 _ANNOTATED_VIDEO_CODECS = ("avc1", "mp4v")
 
+_ORIENTATION_ROTATIONS = {
+    90: cv2.ROTATE_90_CLOCKWISE,
+    180: cv2.ROTATE_180,
+    270: cv2.ROTATE_90_COUNTERCLOCKWISE,
+}
+
+
+def _resolve_orientation_correction(cap) -> int | None:
+    """Return the ``cv2.rotate`` flag needed to undo the source's rotation
+    metadata, or ``None`` if ``cap.read()`` already returns upright frames.
+
+    Some backends (e.g. FFMPEG) honor ``CAP_PROP_ORIENTATION_AUTO`` and
+    rotate during decode, so frames come out upright already; others ignore
+    it and keep decoding raw frames while still reporting the stream's
+    rotation via ``CAP_PROP_ORIENTATION_META``. Re-reading the auto flag
+    after requesting it tells us which happened, so a backend that already
+    corrects frames is never rotated a second time here.
+    """
+    cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)
+    if cap.get(cv2.CAP_PROP_ORIENTATION_AUTO) == 1:
+        return None
+
+    angle = int(round(cap.get(cv2.CAP_PROP_ORIENTATION_META))) % 360
+    if angle == 0:
+        return None
+    if angle not in _ORIENTATION_ROTATIONS:
+        raise RuntimeError(
+            f"Unsupported video rotation metadata: {angle} degrees "
+            "(only 0/90/180/270 are supported)"
+        )
+    return _ORIENTATION_ROTATIONS[angle]
+
+
+def _rotated_frames(cap, first_frame: np.ndarray, rotate_flag: int | None):
+    """Yield already-corrected frames, starting with ``first_frame`` (read
+    ahead of time to resolve its real post-correction shape) and continuing
+    the same capture from where that read left off.
+
+    Deliberately does not seek back to frame 0 to "replay" ``first_frame``
+    from the capture itself: CAP_PROP_POS_FRAMES seeks are not reliably
+    honored by every encoder/muxer (observed directly on this project's own
+    short synthetic test clips), so the already-decoded frame is kept and
+    reused instead of re-reading it.
+    """
+    yield first_frame
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            return
+        yield frame if rotate_flag is None else cv2.rotate(frame, rotate_flag)
+
 
 class FrameClock:
     """Use source presentation time with a monotonic FPS fallback."""
@@ -124,13 +175,21 @@ def run_pipeline(
     validate_config(cfg)
 
     cap = cv2.VideoCapture(video_path)
+    rotate_flag = _resolve_orientation_correction(cap)
     fps          = cap.get(cv2.CAP_PROP_FPS)
     reported_total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    coded_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    if h == 0 or coded_w == 0:
+    # CAP_PROP_FRAME_HEIGHT/WIDTH are not trustworthy here: whether they
+    # already reflect a backend's own auto-rotation (rotate_flag is None
+    # because the decoder corrected a 90/270 source itself) is backend-
+    # specific, and may disagree with this file's own manual-correction
+    # case below. The actual first frame's shape is correct either way.
+    ret, first_frame = cap.read()
+    if not ret:
         cap.release()
         raise RuntimeError(f"Could not open video: {video_path}")
+    if rotate_flag is not None:
+        first_frame = cv2.rotate(first_frame, rotate_flag)
+    h, coded_w = first_frame.shape[:2]
     # Some sources (e.g. anamorphic 720x480 NTSC DV) store non-square pixels:
     # OpenCV decodes/reports the raw coded width, but browsers (and anyone
     # clicking a ZOI in the region configurator) see the display width after
@@ -207,10 +266,7 @@ def run_pipeline(
     telemetry_spools = None
     loop_completed = False
     try:
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
+        for frame in _rotated_frames(cap, first_frame, rotate_flag):
             if w != coded_w:
                 frame = cv2.resize(frame, (w, h), interpolation=cv2.INTER_LINEAR)
 
