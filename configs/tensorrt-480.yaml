@@ -1,0 +1,42 @@
+# TensorRT comparison for the Jetson PyTorch baseline (model.imgsz: 480,
+# actual inference dimensions 288x480 on DSCF0017.MP4, 616.9 s / ~5.8 FPS).
+#
+# Points at the static-shape engine already exported and tested on the
+# Jetson: weights/yolo26n_288x480.engine (FP32, fixed 288x480 input,
+# batch 1). That engine file is NOT in this repo — it exists only on the
+# Jetson — so this config cannot be loaded against a real model off that
+# device; `load_config` itself does not touch model.path, so config
+# loading/validation can still be checked anywhere.
+#
+# Why imgsz must be [288, 480], not the baseline's scalar 480:
+# pipeline/perception/tracking/core.py passes `imgsz=cfg.imgsz` on every
+# single `model.track()` call. With a static TensorRT engine, Ultralytics
+# builds its letterbox with `auto=False` (see ultralytics/engine/predictor.py
+# pre_transform: auto is forced off for a non-dynamic non-"pt" backend), so
+# it resizes to the *exact* requested imgsz instead of the aspect-preserving
+# shape a scalar "480" would produce for a PyTorch model. Passing the
+# baseline's scalar 480 every frame is exactly what made Ultralytics send a
+# 480x480 frame into this 288x480 fixed-shape engine. Setting imgsz to the
+# explicit [height, width] pair the engine was exported with fixes this at
+# the config level, with no pipeline code changes: every track() call now
+# requests the engine's own shape directly, every frame.
+#
+# This does not change what the model actually sees: for this video
+# (1280x720), the baseline's scalar imgsz=480 computes an unrounded
+# letterbox target of 480x270, then rounds the 270 up to the nearest
+# multiple of 32 (stride), landing on 288 -- which is why "288x480" was
+# already the baseline's real inference shape. Requesting [288, 480]
+# directly reproduces the same scale factor (480/1280 = 0.375) and the same
+# centered letterbox padding, just computed explicitly instead of derived.
+# This pairing is specific to DSCF0017's 1280x720 frames and this engine;
+# re-aim either at a different video and the fixed 288x480 shape will no
+# longer match the source aspect ratio.
+#
+# Only model.path and model.imgsz differ from the baseline: conf, train_conf,
+# vehicle_classes, train_class, frame_step, and all perception/temporal
+# settings are left at their defaults so this run is comparable to the
+# Jetson PyTorch baseline on everything except the inference runtime.
+
+model:
+  path: weights/yolo26n_288x480.engine
+  imgsz: [288, 480]
