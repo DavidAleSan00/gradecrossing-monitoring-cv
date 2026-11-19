@@ -269,6 +269,45 @@ normally looks like. Debris detection remains inactive while this reference is
 being created. If most of the scene changes at once, the reference resets
 instead of treating the entire crossing as debris.
 
+### Jetson Setup for the TensorRT Comparison
+
+`configs/tensorrt-480.yaml` targets a Jetson-only static-shape TensorRT engine
+(`weights/yolo26n_288x480.engine`, exported on the Jetson itself and not
+committed, same as other files under `weights/`). This repository's
+`pyproject.toml` pins `numpy==2.0.2` and `opencv-python==4.13.0.92` for every
+platform, including Jetson; that pin is unchanged by this section.
+
+**Do not run `pip install -e .` against an existing Jetson `.venv` that
+already has a working NVIDIA PyTorch/CUDA/TensorRT stack.** A normal
+dependency resolve would upgrade NumPy to `2.0.2` to satisfy that pin, which
+risks breaking PyTorch/TensorRT builds compiled against an older NumPy ABI.
+Instead, add only OpenCV, without letting pip touch anything else:
+
+```bash
+./.venv/bin/pip install --no-deps opencv-python==4.13.0.92
+
+# Confirm NumPy was left alone and the existing NVIDIA stack still imports:
+./.venv/bin/python -c "import numpy, torch, tensorrt, cv2, ultralytics; print(numpy.__version__, cv2.__version__)"
+# Expect: 1.26.4 4.13.0
+```
+
+No `PYTHONPATH` override is needed once OpenCV 4.13.0.92 is installed
+directly into the project's own `.venv`:
+
+```bash
+./.venv/bin/python -m pipeline run --video DSCF0017 --config configs/tensorrt-480.yaml --no-video
+```
+
+**NumPy 1.26.4 with OpenCV 4.13.0.92 is an experimentally verified, but
+unsupported, dependency combination.** It has been confirmed to work together
+on this project's own Jetson Orin Nano (JetPack 6.2.1): both import and
+interoperate, NumPy/PyTorch tensor conversion works, and OpenCV 4.11 and
+OpenCV 4.13 produced identical `debug_timeline.csv` records for the same
+orientation-corrected footage. It is not a pairing OpenCV's published package
+requirements test against or endorse, and this verification does not extend
+to any other NumPy/OpenCV combination — re-check before upgrading either
+package.
+
 ### Files Not Committed to Git
 
 | Path | Contents |
